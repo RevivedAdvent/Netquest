@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — NetQuest{% endblock %}
+{% block crumb %}Dashboard{% endblock %}
+{% block mastery_pct %}{{ stats.mastery }}%{% endblock %}
+
+{% block content %}
+<div class="wrap-wide">
+
+  <div class="split mb16">
+    <div>
+      <div class="eyebrow">{{ days }} days to interview &middot; {{ interview_date }}</div>
+      <h1 class="mt0">Networking readiness</h1>
+      <p class="lead mb0">Mastery is weighted across lessons, checks, command labs, case studies and assessments. It is the number to move.</p>
+    </div>
+    <div class="right">
+      <div class="flex" style="justify-content:flex-end">
+        <span class="badge mono">{{ stats.rank }}</span>
+        <span class="badge">{{ stats.xp }} XP</span>
+        {% if stats.streak > 1 %}<span class="badge warn">{{ stats.streak }}-day streak</span>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-4 mb16">
+    <div class="stat">
+      <div class="label">Overall mastery</div>
+      <div class="value">{{ stats.mastery }}%</div>
+      <div class="bar mt8"><span style="width: {{ stats.mastery }}%"></span></div>
+    </div>
+    <div class="stat">
+      <div class="label">Lessons</div>
+      <div class="value">{{ stats.lessons_completed }}/{{ stats.lessons_total }}</div>
+      <div class="sub">{{ stats.labs_done }} of {{ stats.labs_total }} labs simulated</div>
+    </div>
+    <div class="stat">
+      <div class="label">Case studies</div>
+      <div class="value">{{ stats.missions_solved }}/{{ stats.missions_total }}</div>
+      <div class="sub">solved end to end</div>
+    </div>
+    <div class="stat">
+      <div class="label">Rank progress</div>
+      <div class="value">{{ stats.rank_percent }}%</div>
+      <div class="bar mt8"><span style="width: {{ stats.rank_percent }}%"></span></div>
+    </div>
+  </div>
+
+  <div class="grid grid-hero">
+    <div>
+      <div class="card">
+        <div class="card-title">
+          <h3 class="mt0">Do this next</h3>
+          <span class="badge mono">{{ recommend.kind }}</span>
+        </div>
+        <h2 class="mt0">{{ recommend.title }}</h2>
+        <p class="muted">{{ recommend.detail }}</p>
+        <a class="btn primary" href="{{ recommend.href }}">{{ recommend.label }}</a>
+      </div>
+
+      {% if not diagnostics_done %}
+      <div class="card" style="border-left: 3px solid #dcdcdc">
+        <div class="card-title"><h3 class="mt0">Start with the diagnostic</h3><span class="badge warn">recommended</span></div>
+        <p class="mb8">Fourteen questions decide which of the seven modules you can skip. Without it, this plan will waste your time on things you already know.</p>
+        <a class="btn" href="/diagnostic">Run the 15-minute diagnostic</a>
+      </div>
+      {% elif diagnostics_score %}
+      <div class="card">
+        <div class="card-title"><h3 class="mt0">Diagnostic result</h3><span class="badge mono">{{ diagnostics_score }}</span></div>
+        <p class="small mb8">Your learning path was ordered from this. Re-running it later re-orders the plan as your mastery changes.</p>
+        <a class="btn ghost small" href="/diagnostic">Review or retake</a>
+      </div>
+      {% endif %}
+
+      <div class="card">
+        <div class="card-title"><h3 class="mt0">Weakest modules</h3><a class="btn ghost small" href="/learn">All modules</a></div>
+        {% for m in stats.weak[:4] %}
+        <div class="split" style="padding:8px 0; border-bottom:1px solid #262626">
+          <div>
+            <a href="/learn/{{ m.module_id }}"><b>{{ m.title }}</b></a>
+            <div class="small">{{ m.lessons_completed }}/{{ m.lessons_total }} lessons &middot; checks {{ m.checks_percent }}% &middot; cases {{ m.missions_solved }}/{{ m.missions_total }}</div>
+          </div>
+          <div class="flex" style="min-width:150px">
+            <div class="bar" style="width:70px"><span style="width: {{ m.mastery }}%"></span></div>
+            <span class="mono small">{{ m.mastery }}%</span>
+          </div>
+        </div>
+        {% else %}
+        <p class="small mb0">Nothing below 70%. Use the mock interview to find the gaps a quiz cannot.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div>
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Where you are</h3></div>
+        <div class="list-plain">
+          <li class="split"><span class="muted">Modules at 70%+</span><b>{{ stats.modules | selectattr('mastery', 'ge', 70) | list | length }}/{{ stats.modules | length }}</b></li>
+          <li class="split"><span class="muted">Questions attempted</span><b>{{ stats.attempts }}</b></li>
+          <li class="split"><span class="muted">Streak</span><b>{{ stats.streak }} day{{ '' if stats.streak == 1 else 's' }}</b></li>
+          <li class="split"><span class="muted">Interview date</span><b class="mono">{{ interview_date }}</b></li>
+        </div>
+      </div>
+
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Revise these</h3><a class="btn ghost small" href="/revision">Revision</a></div>
+        {% for r in revision[:4] %}
+        <div style="padding:7px 0; border-bottom:1px solid #262626">
+          <a href="{{ r.href }}" class="small" style="color:#e6e6e6">{{ r.prompt | truncate(88) }}</a>
+          <div class="small muted">{{ r.module_title }} &middot; best {{ r.best }}%</div>
+        </div>
+        {% else %}
+        <p class="small mb0">No scored questions below 75% yet. Answer some checks first.</p>
+        {% endfor %}
+      </div>
+
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Recent activity</h3></div>
+        {% for a in recent %}
+        <div class="split" style="padding:6px 0; border-bottom:1px solid #262626">
+          <span class="small">{{ a.reference }}</span>
+          <span class="mono small muted">{{ a.timestamp[5:16] }}</span>
+        </div>
+        {% else %}
+        <p class="small mb0">Nothing recorded yet.</p>
+        {% endfor %}
+      </div>
+
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Jump in</h3></div>
+        <div class="pill-row">
+          <a class="btn small ghost" href="/simulations">Simulations</a>
+          <a class="btn small ghost" href="/labs">Command labs</a>
+          <a class="btn small ghost" href="/missions">Case studies</a>
+          <a class="btn small ghost" href="/connections">How it connects</a>
+          <a class="btn small ghost" href="/interview">Mock interview</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

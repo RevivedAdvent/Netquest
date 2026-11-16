@@ -1,0 +1,113 @@
+{
+  "id": "case12",
+  "order": 12,
+  "title": "One percent loss that ruins everything",
+  "module_id": "m4",
+  "difficulty": "advanced",
+  "tagline": "Ping looks perfect. Video calls stutter, file copies crawl, and the switch reports no errors. The link is running at half duplex.",
+  "environment": ["Fedora file server with a 1 Gbps NIC", "Access switch port configured manually", "Video conferencing and large file transfers", "No monitoring on interface error counters"],
+  "topology": "clients --[access switch, Gi0/12]--> server eth0 (1 Gbps)",
+  "symptoms": [
+    "ping shows 0% loss and 0.3 ms RTT",
+    "Video calls stutter and drop; large transfers run at 2-5 MB/s instead of 100 MB/s",
+    "The switch reports no CRC errors and no discards",
+    "The problem started after a switch port was replaced"
+  ],
+  "objectives": [
+    "Explain why small-packet tests can look perfect while throughput collapses",
+    "Read duplex and collision counters as evidence rather than as trivia",
+    "Distinguish a duplex mismatch from genuine packet loss and from an MTU problem"
+  ],
+  "tools": ["ethtool", "ip -s link", "ping -f / -s", "iperf3", "ss -ti", "switch show interface"],
+  "framework": [
+    "Is the loss size-dependent, rate-dependent, or constant?",
+    "What do the interface counters say at both ends?",
+    "Do both ends agree on speed and duplex?"
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "label": "The misleading baseline",
+      "command": "ping -c20 10.0.10.20",
+      "output": "20 packets transmitted, 20 received, 0% packet loss, time 19020ms\nrtt min/avg/max/mdev = 0.241/0.302/0.412/0.041 ms",
+      "insight": "Small, infrequent packets are almost never affected by a duplex mismatch. A clean ping is not evidence that the link is healthy.",
+      "requires": []
+    },
+    {
+      "id": "e2",
+      "label": "Throughput reality",
+      "command": "iperf3 -c 10.0.10.20 -t 5",
+      "output": "[ ID] Interval           Transfer     Bitrate         Retr\n[  5]   0.00-5.00   sec  11.2 MBytes  18.8 Mbits/sec  412\n[  5]   0.00-5.00   sec   sender\n[  5]   0.00-5.00   sec   receiver",
+      "insight": "18.8 Mbit/s on a 1 Gbps link with 412 retransmissions. Throughput is roughly 2% of capacity, which is the classic signature of a duplex mismatch: collisions destroy most large frames.",
+      "requires": ["e1"]
+    },
+    {
+      "id": "e3",
+      "label": "What the NIC thinks the link is",
+      "command": "ethtool eth0 | grep -E 'Speed|Duplex|Link detected'",
+      "output": "\tSpeed: 1000Mb/s\n\tDuplex: Half\n\tLink detected: yes",
+      "insight": "The server's NIC negotiated half duplex. A 1 Gbps link cannot legitimately be half duplex — 1000BASE-T is always full duplex — so this is a forced/auto-negotiation mismatch, not a real capability.",
+      "requires": ["e2"]
+    },
+    {
+      "id": "e4",
+      "label": "Error counters on the server",
+      "command": "ip -s link show eth0",
+      "output": "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP mode DEFAULT\n    RX:  bytes packets errors dropped  missed   mcast\n   918223311  812334   0       0       0        12\n    TX:  bytes packets errors dropped carrier collsns\n  1122334455  998211   0       0       0     18842",
+      "insight": "18,842 transmit collisions and zero receive errors. Collisions on a full-duplex-capable link mean the two ends disagree about duplex: the half-duplex side senses the other side's simultaneous transmission as a collision.",
+      "requires": ["e3"]
+    },
+    {
+      "id": "e5",
+      "label": "What the switch port says",
+      "command": "show interfaces Gi0/12 | include duplex|speed|collision|late",
+      "output": "  Full-duplex, 1000Mb/s, media type is 10/100/1000BaseTX\n  0 input errors, 0 CRC, 0 frame, 0 overrun, 0 ignored\n  0 output errors, 0 collisions, 0 interface resets\n  18842 late collision",
+      "insight": "The switch is full duplex and sees late collisions. Late collisions are the fingerprint: the switch transmitted while the server was also transmitting, which only happens when one side is half duplex.",
+      "requires": ["e4"]
+    },
+    {
+      "id": "e6",
+      "label": "TCP-level confirmation",
+      "command": "ss -ti dst 10.0.10.20 | head -4",
+      "output": "\t cubic wscale:7,7 rto:204 rtt:0.31/0.12 ato:40 mss:1448 pmtu:1500 rcvmss:1448\n\t retrans:0/412 bytes_retrans:611234 segs_out:8122 segs_in:4411\n\t send 18.8Mbps pacing_rate 37.6Mbps delivery_rate 4.1Mbps",
+      "insight": "412 retransmissions with a tiny RTT. Low latency plus heavy retransmission is not congestion — congestion would show a rising RTT. It is loss caused by the link itself.",
+      "requires": ["e5"]
+    }
+  ],
+  "hypotheses": [
+    {"text": "The network is congested.", "verdict": "rejected", "why": "RTT is 0.31 ms and the link is at 2% utilisation; congestion would raise latency and queueing, not produce collisions."},
+    {"text": "The server NIC is running half duplex while the switch is full duplex, so collisions destroy large frames.", "verdict": "accepted", "why": "ethtool reports half duplex at 1000 Mb/s, the server counts 18,842 TX collisions, and the switch reports late collisions."},
+    {"text": "The MTU is wrong on the path.", "verdict": "rejected", "why": "An MTU problem produces size-dependent failure with no ACKs for large segments, not collisions and retransmissions at low RTT."},
+    {"text": "The cable is faulty.", "verdict": "rejected", "why": "A bad cable produces CRC and input errors; both ends report zero CRC and zero input errors."}
+  ],
+  "min_evidence": 4,
+  "diagnosis_accept": ["duplex", "half duplex", "collision", "autonegotiation", "auto-negotiation"],
+  "diagnosis_reject": ["congestion", "mtu", "bad cable", "packet loss on the wan", "dns", "bandwidth limit"],
+  "solution": {
+    "root_cause": "The switch port was configured with a fixed speed/duplex while the server NIC uses autonegotiation. Autonegotiation failed to agree, so the server fell back to half duplex at 1000 Mb/s while the switch stayed full duplex. The half-duplex side treats the switch's simultaneous transmissions as collisions, and every collision destroys a large frame, so throughput collapses while small pings still succeed.",
+    "resolution": "Set both ends to autonegotiate (the correct default for 1000BASE-T), or if a fixed setting is genuinely required, fix both ends identically. On the server: ethtool -s eth0 autoneg on (and remove any forced speed/duplex from NetworkManager or the interface configuration so it survives a reboot). On the switch: no speed nonegotiate / speed auto / duplex auto on Gi0/12.",
+    "verification": "ethtool reports Speed 1000Mb/s, Duplex Full, and 'Link partner advertised ... Full'; ip -s link shows collisions no longer incrementing; iperf3 reaches hundreds of Mbit/s with near-zero retransmissions; ss -ti shows retrans:0; and the switch's late-collision counter stops rising.",
+    "lessons": [
+      "A clean ping proves reachability, not health. It uses tiny packets at a low rate.",
+      "Collisions on a modern switched link mean a duplex disagreement, not normal operation.",
+      "Late collisions are the fingerprint of one side being half duplex. Read counters at both ends."
+    ],
+    "interview_followups": [
+      "Why is 1000BASE-T always full duplex?",
+      "What is the difference between an early collision and a late collision?",
+      "Why is forcing speed and duplex considered bad practice?"
+    ]
+  },
+  "resolution_options": [
+    {"text": "Set both ends to autonegotiate", "correct": true, "why": "The standard and correct configuration for 1000BASE-T; both ends then agree on full duplex."},
+    {"text": "Force both ends to 1000/full explicitly", "correct": true, "why": "Also works, but only if both ends are changed together and documented; autonegotiation is preferred."},
+    {"text": "Replace the cable", "correct": false, "why": "No CRC or input errors, so the physical medium is not the problem."},
+    {"text": "Increase the TCP window size", "correct": false, "why": "The bottleneck is frame loss from collisions, not the window."},
+    {"text": "Add a second NIC and bond them", "correct": false, "why": "Adds cost and complexity while leaving the duplex mismatch in place on both links."}
+  ],
+  "interview_questions": [
+    {"q": "Ping is clean but throughput is terrible. What are the candidates?", "a": "Duplex mismatch, MTU/PMTUD black hole, a rate limit or policer, a saturated or erroring link, or an application-level bottleneck. The distinguishing evidence is counters (collisions vs CRC), a size sweep (MTU), and RTT behaviour (congestion)."},
+    {"q": "What causes late collisions?", "a": "A station transmitting after the slot time has passed, which on a switched link almost always means one side is half duplex and did not defer to the other's transmission. It is the signature of a duplex mismatch."},
+    {"q": "Why should speed and duplex be left on auto?", "a": "Autonegotiation is the only way both ends agree on capabilities, and 1000BASE-T requires it. Forcing one side disables negotiation and commonly produces a duplex mismatch, which is worse than the problem it was meant to solve."}
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "id": "m3l6",
+  "module_id": "m3",
+  "title": "DHCP and DNS together: a laptop joins the network",
+  "minutes": 20,
+  "summary": "The end-to-end join. One narrative, from cable insertion to the internal application responding, with every component named.",
+  "sections": [
+    {
+      "heading": "The scenario",
+      "html": "<p>A new laptop is plugged into an access port in VLAN 30. The office has a DHCP server in VLAN 10 with a relay on the core switch, an internal DNS resolver at 10.10.0.53, and an internal wiki at <code>wiki.corp.example</code>. The engineer opens <code>https://wiki.corp.example</code>.</p>"
+    },
+    {
+      "heading": "Step by step",
+      "html": "<ol class='steps'><li><b>Link comes up.</b> The NIC negotiates speed/duplex; <code>ip link</code> shows <code>state UP</code> with <code>LOWER_UP</code>. No address yet.</li><li><b>DISCOVER.</b> Client broadcasts from 0.0.0.0:68 to 255.255.255.255:67. The switch floods it inside VLAN 30 only.</li><li><b>Relay.</b> The core switch's SVI for VLAN 30 has a DHCP relay configured; it unicasts the DISCOVER to the DHCP server with <code>giaddr = 10.30.0.1</code>.</li><li><b>Scope selection.</b> The server matches <code>giaddr</code> to the 10.30.0.0/24 scope, finds a free address, and sends an OFFER back to the relay with option 3 = 10.30.0.1, option 6 = 10.10.0.53, option 15 = corp.example.</li><li><b>REQUEST/ACK.</b> The client broadcasts its REQUEST; the relay forwards it; the server ACKs and writes the lease.</li><li><b>Configuration applied.</b> The client installs the address, adds a connected route for 10.30.0.0/24, a default route via 10.30.0.1, and writes the resolver. On Fedora with NetworkManager, <code>nmcli device show</code> reflects all of it.</li><li><b>Gateway resolution.</b> To reach 10.10.0.53 (off-link), the client ARPs for 10.30.0.1. The router answers with its MAC.</li><li><b>DNS query.</b> The client sends a recursive query for <code>wiki.corp.example</code> A to 10.10.0.53. The internal resolver answers from cache or from the internal zone (a split-horizon view would return a private address here).</li><li><b>Answer.</b> A record 10.10.5.20 with a TTL. The client caches it.</li><li><b>Transport.</b> Routing lookup says 10.10.5.20 is off-link, next hop 10.30.0.1. ARP is already cached. TCP SYN to 10.10.5.20:443 leaves the client.</li><li><b>Routing through the core.</b> The core routes to the server VLAN; each hop rewrites the Ethernet header but not the IP addresses.</li><li><b>TLS and HTTP.</b> The server completes the handshake (certificate for wiki.corp.example must validate against a trusted CA — an internal CA has to be distributed) and serves the page.</li></ol>"
+    },
+    {
+      "heading": "Where it typically breaks, and what you see",
+      "html": "<table><tr><th>Broken stage</th><th>User-visible symptom</th><th>First command</th></tr><tr><td>Link</td><td>No network at all</td><td><code>ip link</code></td></tr><tr><td>DHCP (relay/scope)</td><td>169.254 address, 'limited connectivity'</td><td><code>tcpdump port 67 or 68</code></td></tr><tr><td>Gateway option</td><td>Local works, everything else fails</td><td><code>ip route</code></td></tr><tr><td>DNS option</td><td>Names fail, IP literals work</td><td><code>cat /etc/resolv.conf</code>, <code>resolvectl status</code></td></tr><tr><td>Search domain</td><td>FQDN works, short name fails</td><td><code>dig wiki</code> vs <code>dig wiki.corp.example</code></td></tr><tr><td>DNS view</td><td>Resolves to an address that does not answer</td><td><code>dig @internal</code> vs <code>dig @1.1.1.1</code></td></tr><tr><td>Routing</td><td>Resolves, TCP times out</td><td><code>ip route get</code>, <code>traceroute</code></td></tr><tr><td>Listener</td><td>Resolves, TCP refused instantly</td><td><code>ss -ltnp</code> on the server</td></tr><tr><td>TLS/cert</td><td>Connects, then certificate error</td><td><code>openssl s_client</code>, browser error text</td></tr></table><p>Read the table top to bottom and you have the diagnostic order the whole application teaches. Every row has a different error signature, which is why 'the network is down' is never a sufficient report.</p>"
+    },
+    {
+      "heading": "Why this narrative is the highest-value interview answer",
+      "html": "<p>Questions like 'what happens when you open an internal site' are not testing trivia. They test whether you can hold the whole stack in your head and, crucially, whether you know which component is responsible at each step. Answer in stages, name the component, and state the evidence you would collect if that stage failed. That structure is what separates a memorised answer from an engineering answer.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m3l6-1",
+      "type": "mcq",
+      "prompt": "A client receives a valid address, can reach its gateway, but every hostname lookup fails while pinging 8.8.8.8 works. Which single DHCP option is most likely wrong?",
+      "options": [
+        "Option 51 (lease time)",
+        "Option 1 (subnet mask)",
+        "Option 3 (router)",
+        "Option 6 (DNS servers)"
+      ],
+      "answer": 3,
+      "explanation": "Reachability works, so mask and gateway are fine. Name resolution failing while raw IP connectivity works points at the configured resolver.",
+      "why_wrong": {
+        "1": "A wrong mask would break the gateway decision too.",
+        "2": "A wrong router would break ping 8.8.8.8.",
+        "0": "Lease time affects duration, not resolution."
+      },
+      "concepts": [
+        "DHCP options",
+        "DNS integration"
+      ]
+    },
+    {
+      "id": "q-m3l6-2",
+      "type": "self",
+      "prompt": "Narrate the full journey of a laptop joining VLAN 30 and reaching an internal application, naming the component responsible at each stage.",
+      "checklist": [
+        {
+          "text": "Link negotiation, then DHCP DISCOVER broadcast confined to the VLAN.",
+          "weight": 1
+        },
+        {
+          "text": "Relay forwards with giaddr so the server selects the correct scope.",
+          "weight": 2
+        },
+        {
+          "text": "ACK installs address, mask, default route and resolver.",
+          "weight": 2
+        },
+        {
+          "text": "Client ARPs for the gateway because the resolver is off-link.",
+          "weight": 1
+        },
+        {
+          "text": "Recursive DNS query answered by the internal resolver (possibly a split-horizon view).",
+          "weight": 2
+        },
+        {
+          "text": "Then TCP to port 443, TLS handshake, HTTP — separate from DNS.",
+          "weight": 2
+        }
+      ],
+      "reference": "<p>Link up -> broadcast DISCOVER inside VLAN 30 -> relay forwards with giaddr -> server picks the matching scope and OFFERs with options 3/6/15 -> REQUEST/ACK commits the lease -> client installs address, connected route, default route, resolver. It then ARPs for the gateway (off-link resolver), sends a recursive DNS query to the internal resolver, receives the A record and caches it for the TTL. Finally a separate chain: routing lookup, TCP SYN to 443, TLS handshake validated against a CA, HTTP request. Each stage has a distinct failure signature, which is how you localise a fault instead of guessing.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "end-to-end journey",
+        "DHCP/DNS integration"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Everything",
+      "text": "This lesson is the join point of switching, addressing, DHCP, DNS, routing, TCP and TLS. Use it as the spine for interview answers."
+    },
+    {
+      "title": "Journeys",
+      "text": "Open 'How It All Connects' for the same narrative with per-stage evidence collection."
+    }
+  ],
+  "interview": [
+    {
+      "q": "A new laptop cannot reach the internal wiki. Walk me through your investigation.",
+      "a": "Start at the bottom: link state, then the address it received (DHCP worked?), then default route and gateway reachability, then resolver configuration and a DNS query, then TCP to the resolved IP on the port, then the service on the server. Each step either passes (move up) or fails (you have your answer)."
+    },
+    {
+      "q": "How do DHCP and DNS relate operationally?",
+      "a": "DHCP supplies the resolver address (option 6) and search domains (15/119); DNS supplies names for the addresses DHCP hands out. Many organisations also have DHCP update DNS records dynamically (DDNS) so forward and reverse entries match leases."
+    }
+  ]
+}

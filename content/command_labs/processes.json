@@ -1,0 +1,568 @@
+{
+  "labs": [
+    {
+      "id": "ps",
+      "command": "ps",
+      "group": "Process management",
+      "module_id": "m7",
+      "tagline": "A precise snapshot of what is running.",
+      "problem": "Identify a process, its owner, its parent and its resource usage without guessing.",
+      "how": "Reads /proc and prints a selected set of processes with chosen columns. Static snapshot, unlike top.",
+      "syntax": "ps -eo COLUMNS | ps -fp PID | ps -ef --forest",
+      "flags": [
+        {
+          "flag": "-e",
+          "why": "Every process."
+        },
+        {
+          "flag": "-o",
+          "why": "Choose columns: pid,ppid,user,stat,pcpu,pmem,etime,cmd."
+        },
+        {
+          "flag": "--sort=-pcpu",
+          "why": "Sort by CPU descending."
+        },
+        {
+          "flag": "-f",
+          "why": "Full format with UID, PID, PPID and start time."
+        },
+        {
+          "flag": "-T",
+          "why": "Show threads of a process."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "ps -eo pid,ppid,user,pcpu,pmem,etime,cmd --sort=-pcpu | head",
+          "note": "Top CPU consumers with age."
+        },
+        {
+          "cmd": "ps -fp 4242",
+          "note": "Detail for one PID."
+        },
+        {
+          "cmd": "ps -ef --forest | grep -A3 nginx",
+          "note": "Process tree around a name."
+        }
+      ],
+      "sample": "$ ps -eo pid,ppid,user,stat,pcpu,pmem,etime,cmd --sort=-pcpu | head -4\n  PID  PPID USER     STAT %CPU %MEM     ELAPSED CMD\n 1204     1 postgres S    12.4  8.1    3-02:11:04 /usr/bin/postgres -D /var/lib/pgsql/data\n 1330     1 root     S     1.2  0.4    3-02:11:04 nginx: worker process\n 4242     1 svcapp   R    99.0  2.2       00:03:41 /usr/bin/myapp --worker",
+      "read": [
+        "STAT shows state: R running, S sleeping, D uninterruptible IO wait, Z zombie, T stopped.",
+        "ELAPSED tells you how long it has run: a 3-minute process at 99% CPU just started, which often means a crash loop.",
+        "PPID 1 means it was reparented to systemd/init — its original parent is gone.",
+        "%CPU here is an average over the process lifetime, not instantaneous; top shows live usage."
+      ],
+      "mistakes": [
+        "Treating ps %CPU as current load.",
+        "Killing a PID without confirming the user and command first.",
+        "Forgetting that PIDs are recycled; write down the start time too."
+      ],
+      "when": "First step of any process investigation: identify before acting.",
+      "followups": [
+        "top -H -p PID",
+        "ss -tp",
+        "journalctl -u SERVICE"
+      ],
+      "try": {
+        "scenario": "Identify the top CPU consumers and check for zombies or IO-blocked processes on your machine.",
+        "task": "Print the top CPU processes with state and elapsed time, then count processes in D and Z states.",
+        "command": "ps -eo pid,ppid,user,stat,pcpu,etime,cmd --sort=-pcpu | head -6; echo ---; ps -eo stat | awk 'NR>1 && ($1 ~ /^D/ || $1 ~ /^Z/)' | sort | uniq -c",
+        "expected_patterns": [
+          {
+            "pattern": "(?im)^\\s*PID\\s+PPID\\s+USER\\s+STAT",
+            "label": "the column header line"
+          },
+          {
+            "pattern": "(?m)^\\s*\\d+\\s+\\d+\\s+\\S+\\s+[RSDZT]",
+            "label": "process rows with a state column"
+          },
+          {
+            "pattern": "---|^\\s*\\d+\\s+[DZ]",
+            "label": "the state census section (even if empty)"
+          }
+        ],
+        "verdict_ok": "You have current process state plus an explicit check for D and Z states.",
+        "verdict_missing": "Paste both sections including the header so the columns are interpretable."
+      },
+      "simulate": {
+        "intro": "A service is looping. Read the snapshot.",
+        "terminal": "$ ps -eo pid,ppid,user,stat,pcpu,etime,cmd --sort=-pcpu | head -3\n  PID  PPID USER     STAT %CPU     ELAPSED CMD\n 4242     1 svcapp   R    99.0     00:00:12 /usr/bin/myapp --worker\n 4243  4242 svcapp   Z     0.0     00:00:09 [myapp] <defunct>",
+        "questions": [
+          {
+            "id": "lab-ps-s1",
+            "prompt": "What is the most likely situation?",
+            "options": [
+              "A zombie is consuming CPU",
+              "The process is healthy and simply busy",
+              "The worker restarts constantly (12s elapsed at 99% CPU) and one of its children has exited without being reaped",
+              "The system is out of memory"
+            ],
+            "answer": 2,
+            "explanation": "A 12-second-old process at 99% plus a defunct child of that process means a crash/restart loop with unreaped children.",
+            "why_wrong": {
+              "1": "The elapsed time is too short for a stable worker.",
+              "3": "Nothing indicates memory pressure here.",
+              "0": "Zombies consume no CPU."
+            }
+          },
+          {
+            "id": "lab-ps-s2",
+            "prompt": "Where do you look next for the cause?",
+            "options": [
+              "journalctl -u myapp and the application log for crash or exception output",
+              "ps again",
+              "ip route",
+              "The DNS resolver"
+            ],
+            "answer": 0,
+            "explanation": "A crash loop is diagnosed from logs, not from more process snapshots.",
+            "why_wrong": {
+              "2": "Networking is not implicated.",
+              "3": "Unrelated.",
+              "1": "The snapshot already told you the shape of the problem."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "`ps` shows a process with PPID 1 that you did not start via systemd.",
+        "question": "What does that mean?",
+        "options": [
+          "It is a zombie",
+          "It was necessarily started by systemd",
+          "It is a kernel thread",
+          "Its original parent exited and it was reparented to PID 1 — it is now effectively unmanaged unless a supervisor adopts it"
+        ],
+        "answer": 3,
+        "explanation": "Orphaning reparents to init/systemd, which does not mean the process has a unit or a restart policy.",
+        "why_wrong": {
+          "1": "PPID 1 is the reparenting result, not proof of a unit.",
+          "2": "Kernel threads appear with brackets and usually PPID 2.",
+          "0": "Zombies show state Z."
+        }
+      }
+    },
+    {
+      "id": "kill",
+      "command": "kill",
+      "group": "Process management",
+      "module_id": "m7",
+      "tagline": "Send a signal — deliberately.",
+      "problem": "Stop or reload a process, choosing the least destructive signal that works.",
+      "how": "Sends a signal to a PID (or a process group). SIGTERM is the default; SIGKILL cannot be caught.",
+      "syntax": "kill [-SIGNAL] PID | kill -l",
+      "flags": [
+        {
+          "flag": "-15 / -TERM",
+          "why": "Default: request a clean exit."
+        },
+        {
+          "flag": "-9 / -KILL",
+          "why": "Force termination, no cleanup."
+        },
+        {
+          "flag": "-1 / -HUP",
+          "why": "Often means 'reload configuration'."
+        },
+        {
+          "flag": "-0",
+          "why": "Check whether you may signal the PID (permission test)."
+        },
+        {
+          "flag": "-l",
+          "why": "List signal names and numbers."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "kill 4242",
+          "note": "Graceful termination request."
+        },
+        {
+          "cmd": "sleep 5; ps -p 4242 && kill -9 4242",
+          "note": "Escalate only if still alive."
+        },
+        {
+          "cmd": "kill -HUP $(cat /run/nginx.pid)",
+          "note": "Reload via PID file, where supported."
+        }
+      ],
+      "sample": "$ ps -p 4242 -o pid,stat,cmd\n  PID STAT CMD\n 4242 S    /usr/bin/myapp --worker\n$ kill 4242\n$ sleep 2; ps -p 4242 -o pid,stat,cmd\n  PID STAT CMD\n$ kill -0 4242\nkill: (4242): No such process",
+      "read": [
+        "No output from ps -p means the process is gone — the graceful signal worked.",
+        "kill -0 is a permission and existence test; it sends nothing.",
+        "If the process remains after SIGTERM, read its logs before escalating: it may be blocked in D state, where even SIGKILL waits.",
+        "Signalling a process group (negative PID) affects children too — powerful and easy to misuse."
+      ],
+      "mistakes": [
+        "Skipping straight to -9 and losing cleanup, leaving stale locks or PID files.",
+        "Killing a PID that has already been recycled (you wrote it down minutes ago).",
+        "Using kill on a systemd service instead of systemctl, so the unit's restart policy fights you."
+      ],
+      "when": "After identifying the process and confirming no supervised stop is more appropriate.",
+      "followups": [
+        "systemctl stop SERVICE",
+        "journalctl -u SERVICE -n 30",
+        "ps -p PID"
+      ],
+      "try": {
+        "scenario": "Practise the graceful-then-forceful sequence on a process you create yourself. Never do this on system processes.",
+        "task": "Start a throwaway sleep, terminate it gracefully, and confirm it is gone.",
+        "command": "sleep 300 & PID=$!; echo \"started=$PID\"; kill \"$PID\"; sleep 1; ps -p \"$PID\" > /dev/null && echo 'still running' || echo 'terminated gracefully'",
+        "expected_patterns": [
+          {
+            "pattern": "started=\\d+",
+            "label": "the PID of the process you created"
+          },
+          {
+            "pattern": "terminated gracefully|still running",
+            "label": "the post-signal verification line"
+          }
+        ],
+        "verdict_ok": "You signalled a process you own and verified the outcome — the safe, repeatable pattern.",
+        "verdict_missing": "Paste both lines so the signal and the verification are visible."
+      },
+      "simulate": {
+        "intro": "A service ignores a normal stop request. Read the sequence.",
+        "terminal": "$ systemctl stop myapp\nJob for myapp.service failed because a timeout was exceeded.\n$ ps -eo pid,stat,cmd | grep '[m]yapp'\n 4242 D    /usr/bin/myapp --worker\n$ kill -9 4242\n$ ps -p 4242 -o pid,stat\n  PID STAT\n 4242 D",
+        "questions": [
+          {
+            "id": "lab-kill-s1",
+            "prompt": "Why is the process still there after SIGKILL?",
+            "options": [
+              "The PID was reused",
+              "It is in uninterruptible sleep (D) waiting on IO, so the signal is not delivered until the syscall returns",
+              "systemd restarted it instantly",
+              "SIGKILL requires root"
+            ],
+            "answer": 1,
+            "explanation": "Signal delivery happens on return to user space; a task blocked in the kernel cannot be interrupted.",
+            "why_wrong": {
+              "3": "SIGKILL works for any process you may signal, regardless of state.",
+              "0": "The stat column shows the same PID still blocked.",
+              "2": "A restart would show a new PID and usually state S/R."
+            }
+          },
+          {
+            "id": "lab-kill-s2",
+            "prompt": "What is the correct next investigation?",
+            "options": [
+              "Send SIGKILL repeatedly",
+              "Storage: check IO subsystem health and what the process is waiting on (dmesg, /proc/PID/stack, vmstat)",
+              "Increase the kill timeout",
+              "Reboot immediately"
+            ],
+            "answer": 1,
+            "explanation": "D state with an unkillable process points at storage or a stuck kernel operation.",
+            "why_wrong": {
+              "0": "It has no effect in D state.",
+              "2": "Timeouts do not unblock IO.",
+              "3": "A reboot may be needed eventually, but only after evidence is captured."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "You must restart a production service. It has a systemd unit with Restart=always.",
+        "question": "What is the correct action?",
+        "options": [
+          "kill the PID and hope",
+          "Reboot the host",
+          "kill -9 the PID",
+          "systemctl restart myapp, so systemd applies the unit's stop signal, timeout and start order"
+        ],
+        "answer": 3,
+        "explanation": "The unit defines the lifecycle; bypassing it produces a restart race and loses dependency ordering.",
+        "why_wrong": {
+          "2": "Skips cleanup and lets the policy restart it unpredictably.",
+          "0": "Same problem, less forceful, still bypasses the unit.",
+          "1": "Disproportionate."
+        }
+      }
+    },
+    {
+      "id": "systemctl",
+      "command": "systemctl",
+      "group": "Process management",
+      "module_id": "m7",
+      "tagline": "Services with a lifecycle, not just processes.",
+      "problem": "Determine the state of a service, why it failed, what it actually executes, and manage it safely.",
+      "how": "Client for systemd (PID 1). Units describe how to run something; systemd tracks state, restarts and logs.",
+      "syntax": "systemctl {status|start|stop|restart|reload|enable|cat|show} UNIT",
+      "flags": [
+        {
+          "flag": "status UNIT",
+          "why": "State, exit code and recent log lines."
+        },
+        {
+          "flag": "cat UNIT",
+          "why": "The unit file plus drop-ins, in load order."
+        },
+        {
+          "flag": "show -p PROPERTY",
+          "why": "Effective values: User, ExecStart, Restart, TimeoutStopSec."
+        },
+        {
+          "flag": "is-active / is-enabled",
+          "why": "Scriptable state checks."
+        },
+        {
+          "flag": "list-units --failed",
+          "why": "All currently failed units."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "systemctl status sshd",
+          "note": "Is it running and why did it stop?"
+        },
+        {
+          "cmd": "systemctl list-units --failed",
+          "note": "Triage after a boot problem."
+        },
+        {
+          "cmd": "systemctl show -p User,Group,ExecStart myapp",
+          "note": "Effective execution identity."
+        }
+      ],
+      "sample": "$ systemctl status myapp\n* myapp.service - My Application\n     Loaded: loaded (/etc/systemd/system/myapp.service; enabled; preset: disabled)\n     Active: failed (Result: exit-code) since Mon 2026-11-17 09:59:12 UTC; 3min ago\n    Process: 4242 ExecStart=/usr/bin/myapp --config /etc/myapp/app.conf (code=exited, status=1/FAILURE)\n   Main PID: 4242 (code=exited, status=1/FAILURE)\n\nNov 17 09:59:12 host myapp[4242]: FATAL: cannot open /etc/myapp/app.conf: Permission denied",
+      "read": [
+        "'Active: failed (Result: exit-code)' plus the Process line gives you the exit status.",
+        "The last log lines in status often contain the actual error — here a permissions problem.",
+        "'enabled' means it starts at boot; 'disabled' does not, and 'masked' prevents starting at all.",
+        "systemctl cat shows drop-ins that may override what you think the unit says."
+      ],
+      "mistakes": [
+        "Reading only the Active line and ignoring the Process/exit code.",
+        "Editing the unit and forgetting systemctl daemon-reload.",
+        "Using kill instead of systemctl, then being confused by Restart=always."
+      ],
+      "when": "Any service-level problem: not starting, restarting constantly, or behaving differently than manually.",
+      "followups": [
+        "journalctl -u UNIT -n 50",
+        "systemctl cat UNIT",
+        "ls -l CONFIG_PATH"
+      ],
+      "try": {
+        "scenario": "Inspect a real unit on your Fedora machine and extract its effective execution identity.",
+        "task": "Pick a running service, show its status briefly and its effective User/ExecStart.",
+        "command": "SVC=$(systemctl list-units --type=service --state=running --no-legend --no-pager | awk 'NR==3{print $1}'); echo \"service=$SVC\"; systemctl status \"$SVC\" --no-pager | head -8; echo ---; systemctl show -p User,Group,ExecStart \"$SVC\"",
+        "expected_patterns": [
+          {
+            "pattern": "service=\\S+\\.service",
+            "label": "the chosen unit name"
+          },
+          {
+            "pattern": "(?m)^\\s*(Loaded|Active):",
+            "label": "the status summary lines"
+          },
+          {
+            "pattern": "(?m)^(User|Group|ExecStart)=",
+            "label": "the effective unit properties"
+          }
+        ],
+        "verdict_ok": "You have state plus the effective execution identity — the combination needed to explain most service failures.",
+        "verdict_missing": "Paste the status block and the systemctl show output."
+      },
+      "simulate": {
+        "intro": "A service fails immediately after a deploy. Read the evidence.",
+        "terminal": "$ systemctl status myapp --no-pager\n* myapp.service - My Application\n     Active: failed (Result: exit-code) since Mon 2026-11-17 09:59:12 UTC\n    Process: 4242 ExecStart=/usr/bin/myapp --config /etc/myapp/app.conf (code=exited, status=1/FAILURE)\n\nNov 17 09:59:12 host myapp[4242]: FATAL: cannot open /etc/myapp/app.conf: Permission denied\n$ systemctl show -p User,Group myapp\nUser=svcapp\nGroup=svcapp\n$ ls -l /etc/myapp/app.conf\n-rw-r----- 1 root myapp 512 Nov 17 09:58 /etc/myapp/app.conf",
+        "questions": [
+          {
+            "id": "lab-systemctl-s1",
+            "prompt": "What is the root cause?",
+            "options": [
+              "The service runs as svcapp:svcapp but the file is root:myapp with group read — svcapp is neither owner nor group member",
+              "The config file is empty",
+              "The unit has the wrong ExecStart",
+              "The binary is missing"
+            ],
+            "answer": 0,
+            "explanation": "Permission evaluation: owner root (no), group myapp (svcapp is not in it), others (no r). Access denied.",
+            "why_wrong": {
+              "3": "ExecStart ran and failed on the file.",
+              "1": "Size is 512 bytes.",
+              "2": "It executed the correct path."
+            }
+          },
+          {
+            "id": "lab-systemctl-s2",
+            "prompt": "What is the least-privilege fix?",
+            "options": [
+              "Run the service as root",
+              "Copy the file to /tmp",
+              "Add svcapp to the myapp group (or set Group=myapp in the unit) — not chmod 777",
+              "chmod 666 /etc/myapp/app.conf"
+            ],
+            "answer": 2,
+            "explanation": "Grant exactly the access needed, through group membership or the unit's Group setting.",
+            "why_wrong": {
+              "3": "World-writable config is a security hole.",
+              "0": "Removes all isolation.",
+              "1": "World-readable temp location, and SELinux would likely block it."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "After editing a unit file, `systemctl restart` still uses the old ExecStart.",
+        "question": "Why?",
+        "options": [
+          "The service is masked",
+          "Restart does not re-read anything",
+          "systemd has not reloaded unit definitions — run systemctl daemon-reload",
+          "The file is read-only"
+        ],
+        "answer": 2,
+        "explanation": "Unit files are cached; daemon-reload re-reads them and regenerates dependencies.",
+        "why_wrong": {
+          "3": "That gives a write error, not a stale unit.",
+          "1": "Restart does re-read the cached definition.",
+          "0": "Masking would prevent start entirely."
+        }
+      }
+    },
+    {
+      "id": "journalctl",
+      "command": "journalctl",
+      "group": "Process management",
+      "module_id": "m7",
+      "tagline": "The log of everything systemd collected.",
+      "problem": "Find the error that explains a failure, bounded by unit and time.",
+      "how": "Queries the systemd journal (binary, indexed by unit, priority, boot and time).",
+      "syntax": "journalctl [-u UNIT] [-b] [-p PRIO] [--since TIME] [-f]",
+      "flags": [
+        {
+          "flag": "-u UNIT",
+          "why": "Restrict to one unit."
+        },
+        {
+          "flag": "-b",
+          "why": "Current boot only."
+        },
+        {
+          "flag": "-p err",
+          "why": "Priority err and above."
+        },
+        {
+          "flag": "--since / --until",
+          "why": "Bound an incident window precisely."
+        },
+        {
+          "flag": "-k",
+          "why": "Kernel messages (OOM killer, link events)."
+        },
+        {
+          "flag": "--disk-usage",
+          "why": "How much space the journal takes."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "journalctl -u myapp -n 80 --no-pager",
+          "note": "Recent lines for one unit."
+        },
+        {
+          "cmd": "journalctl -b -p err --no-pager",
+          "note": "Errors this boot."
+        },
+        {
+          "cmd": "journalctl -k -b | grep -i 'out of memory'",
+          "note": "Did the kernel kill a process?"
+        }
+      ],
+      "sample": "$ journalctl -u myapp --since '10 min ago' --no-pager | tail -6\nNov 17 09:59:12 host systemd[1]: Starting My Application...\nNov 17 09:59:12 host myapp[4242]: FATAL: cannot open /etc/myapp/app.conf: Permission denied\nNov 17 09:59:12 host systemd[1]: myapp.service: Main process exited, code=exited, status=1/FAILURE\nNov 17 09:59:12 host systemd[1]: myapp.service: Failed with result 'exit-code'.",
+      "read": [
+        "Lines from the unit appear with the process name in brackets; lines from systemd itself are labelled systemd[1].",
+        "The 'Failed with result' line summarises why systemd gave up (exit-code, timeout, signal).",
+        "Use -k for kernel messages: OOM kills and interface flaps never appear in the unit's own log.",
+        "Bounding with --since makes the output readable and the evidence citable."
+      ],
+      "mistakes": [
+        "Dumping the entire journal and drowning in noise.",
+        "Looking only at the application's log file when the failure was a kernel OOM kill.",
+        "Assuming the journal has everything — a unit can redirect StandardOutput elsewhere."
+      ],
+      "when": "Immediately after systemctl status suggests a failure, and for any 'why did it die' question.",
+      "followups": [
+        "systemctl cat UNIT",
+        "journalctl -k -b | tail",
+        "journalctl --disk-usage"
+      ],
+      "try": {
+        "scenario": "Collect this boot's error-level messages, bounded, and check for kernel events.",
+        "task": "Show errors from this boot, then the last kernel lines.",
+        "command": "journalctl -b -p err --no-pager | tail -12; echo ---; journalctl -k -b --no-pager | tail -6",
+        "expected_patterns": [
+          {
+            "pattern": "(?m)^\\w{3} \\d{2} \\d{2}:\\d{2}:\\d{2}",
+            "label": "journal timestamped lines"
+          },
+          {
+            "pattern": "(?i)(error|failed|denied|oom|out of memory)|^--",
+            "label": "an error-level message or an explicit empty marker"
+          }
+        ],
+        "verdict_ok": "You have bounded error-level evidence and the kernel view, which is where OOM kills and link events appear.",
+        "verdict_missing": "Paste the journal lines; if nothing is there, an explicit marker is acceptable evidence too."
+      },
+      "simulate": {
+        "intro": "A service died overnight. Find the cause in the journal.",
+        "terminal": "$ journalctl -k -b --no-pager | grep -i -m2 'memory\\|killed'\nNov 16 23:41:02 host kernel: Out of memory: Killed process 4242 (java) total-vm:8123456kB\nNov 16 23:41:02 host kernel: oom_reaper: reaped process 4242 (java)\n$ systemctl status myapp --no-pager | head -4\n* myapp.service - My Application\n     Active: failed (Result: signal) since Sun 2026-11-16 23:41:02 UTC\n    Process: 4242 ExecStart=/usr/bin/java -jar /opt/myapp/app.jar (code=killed, signal=KILL)",
+        "questions": [
+          {
+            "id": "lab-journal-s1",
+            "prompt": "What killed the service?",
+            "options": [
+              "The kernel OOM killer due to memory pressure — evidence is in the kernel journal, not the app log",
+              "A network timeout",
+              "An operator running kill -9",
+              "A configuration error"
+            ],
+            "answer": 0,
+            "explanation": "signal=KILL plus the kernel's OOM line identifies the kernel as the killer.",
+            "why_wrong": {
+              "2": "Possible in principle, but the OOM record is direct evidence.",
+              "3": "That yields exit-code, not signal KILL.",
+              "1": "That does not terminate a JVM."
+            }
+          },
+          {
+            "id": "lab-journal-s2",
+            "prompt": "What is the correct mitigation path?",
+            "options": [
+              "Disable the OOM killer",
+              "Restart and hope",
+              "Add swap and stop",
+              "Investigate memory usage and limits (heap sizing, cgroup limits) rather than simply restarting"
+            ],
+            "answer": 3,
+            "explanation": "The cause is memory demand versus available memory or cgroup limits; sizing and limits are the durable fix.",
+            "why_wrong": {
+              "1": "It will recur.",
+              "2": "Swap can help but masks the sizing problem and hurts latency.",
+              "0": "Dangerous and not a fix."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "A unit's own log file shows nothing at the time it stopped.",
+        "question": "Where do you look?",
+        "options": [
+          "The DNS server",
+          "journalctl -k -b and the unit's journal in the same time window, including signal/exit information from systemd",
+          "Only the application log again",
+          "The switch MAC table"
+        ],
+        "answer": 1,
+        "explanation": "Kernel and systemd records capture kills, OOM, dependency failures and timeouts that the application cannot log.",
+        "why_wrong": {
+          "2": "Re-reading the same empty file adds nothing.",
+          "0": "Unrelated.",
+          "3": "Unrelated."
+        }
+      }
+    }
+  ]
+}

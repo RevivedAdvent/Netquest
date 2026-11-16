@@ -1,0 +1,144 @@
+{
+  "client": {"name": "Laptop", "mac": "AA:BB:CC:00:00:01", "vlan": 30},
+  "server": {"name": "DHCP server", "ip": "10.10.0.10"},
+  "relay": {"name": "Core switch SVI (VLAN 30)", "ip": "10.30.0.1"},
+  "scope": {"network": "10.30.0.0/24", "pool": "10.30.0.100-10.30.0.200", "free": 47,
+            "options": {"1": "255.255.255.0", "3": "10.30.0.1", "6": "10.10.0.53", "15": "corp.example"}},
+  "steps": [
+    {
+      "id": "discover",
+      "label": "DHCPDISCOVER",
+      "direction": "client-server",
+      "src": "0.0.0.0:68 (UDP)",
+      "dst": "255.255.255.255:67 (UDP)",
+      "l2": "broadcast (dst MAC ff:ff:ff:ff:ff:ff)",
+      "from": "Laptop",
+      "to": "Any DHCP server on the segment",
+      "summary": "The client has no address, so it broadcasts a request for any DHCP server to answer.",
+      "detail": "Because the client has no IP address it cannot unicast to a server it does not know. The frame is broadcast on the segment and flooded by the switch inside VLAN 30 only. In this lab a relay is configured on the core switch's SVI, so the relay picks the DISCOVER up and unicasts it to the server with giaddr = 10.30.0.1.",
+      "fields": [
+        "option 53 = DHCPDISCOVER (1)",
+        "xid = random transaction id, matched in all replies",
+        "chaddr = client MAC (how the server replies without an IP)",
+        "option 55 = parameter request list (mask, gateway, DNS, domain, lease time)",
+        "option 12 = hostname",
+        "giaddr = 10.30.0.1 once the relay forwards it"
+      ]
+    },
+    {
+      "id": "offer",
+      "label": "DHCPOFFER",
+      "direction": "server-client",
+      "src": "10.10.0.10:67 (UDP)",
+      "dst": "10.30.0.100:68 (UDP, via relay)",
+      "l2": "unicast to the relay, then to the client MAC",
+      "from": "DHCP server",
+      "to": "Laptop (via the relay)",
+      "summary": "The server selects the scope from giaddr, reserves an address and proposes it with options.",
+      "detail": "The server maps giaddr 10.30.0.1 to the 10.30.0.0/24 scope, finds a free address (10.30.0.100) and reserves it temporarily. The OFFER contains the address plus the option set the client would receive. The server does not commit anything yet — if the client never REQUESTs, the address returns to the pool. If several servers were reachable, the client would receive several OFFERs.",
+      "fields": [
+        "yiaddr = 10.30.0.100 (the offered address)",
+        "option 54 = server identifier 10.10.0.10",
+        "option 51 = lease time 28800s",
+        "option 1/3/6/15 = mask, gateway, DNS, domain",
+        "siaddr = next server (empty here)"
+      ]
+    },
+    {
+      "id": "request",
+      "label": "DHCPREQUEST",
+      "direction": "client-server",
+      "src": "0.0.0.0:68 (UDP)",
+      "dst": "255.255.255.255:67 (UDP)",
+      "l2": "broadcast",
+      "from": "Laptop",
+      "to": "All DHCP servers on the segment",
+      "summary": "The client selects one offer and announces the choice, so other servers can release their offers.",
+      "detail": "The client is still unconfigured, so this is broadcast too. It carries the requested address and option 54 naming the chosen server. Any other server that offered hears the REQUEST and returns its reservation to the pool. Some implementations unicast once the server identifier is known; servers must accept both forms.",
+      "fields": [
+        "option 53 = DHCPREQUEST (3)",
+        "requested IP = 10.30.0.100",
+        "option 54 = 10.10.0.10 (the chosen server)",
+        "option 50 = requested address (explicit form)",
+        "chaddr = client MAC"
+      ]
+    },
+    {
+      "id": "ack",
+      "label": "DHCPACK",
+      "direction": "server-client",
+      "src": "10.10.0.10:67 (UDP)",
+      "dst": "10.30.0.100:68 (UDP, via relay)",
+      "l2": "unicast",
+      "from": "DHCP server",
+      "to": "Laptop",
+      "summary": "The lease is committed. The client now applies address, mask, gateway, DNS and search domain.",
+      "detail": "The ACK is the authoritative configuration. The server writes the lease with timers and the client installs the address, a connected route for 10.30.0.0/24, a default route via 10.30.0.1 and the resolver 10.10.0.53. The client then renews at T1 (50% of the lease, unicast) and rebinds at T2 (87.5%, broadcast).",
+      "fields": [
+        "yiaddr = 10.30.0.100",
+        "option 51 = lease time, T1 = 50%, T2 = 87.5%",
+        "option 58/59 = explicit renewal/rebinding times (optional)",
+        "option 1 = 255.255.255.0",
+        "option 3 = 10.30.0.1",
+        "option 6 = 10.10.0.53",
+        "option 15 = corp.example"
+      ]
+    }
+  ],
+  "faults": [
+    {
+      "id": "no_server",
+      "label": "DHCP server unreachable",
+      "detail": "The server is down, or the relay is missing so the DISCOVER never arrives.",
+      "breaks_at": "offer",
+      "symptom": "No OFFER arrives. The client retries with backoff and eventually self-assigns a 169.254.x.x link-local address with no default route.",
+      "diagnosis": "Capture on the segment: DISCOVERs leave and nothing returns. If the client is in a different VLAN from the server, check the relay/helper configuration first.",
+      "fix": "Restore the server or configure the relay; confirm with a capture that OFFERs return."
+    },
+    {
+      "id": "exhausted",
+      "label": "Address pool exhausted",
+      "detail": "Every address in the scope is leased, so the server has nothing to offer.",
+      "breaks_at": "offer",
+      "symptom": "New clients get nothing (or a NAK); existing clients keep working until their leases expire. The server log shows no free leases for the scope.",
+      "diagnosis": "Inspect the lease database and compare lease count with pool size; check lease duration against churn.",
+      "fix": "Extend the scope, shorten leases for high-churn segments, or reclaim stale leases."
+    },
+    {
+      "id": "wrong_scope",
+      "label": "Incorrect scope / relay mapping",
+      "detail": "The relay's giaddr does not match the intended scope, so the server offers an address from the wrong subnet.",
+      "breaks_at": "ack",
+      "symptom": "The client gets an address and mask that do not belong to its segment. Local communication fails immediately, and the gateway is unreachable.",
+      "diagnosis": "Compare the address the client received with the subnet of the segment (and the relay's giaddr). Check the scope definitions, not the client.",
+      "fix": "Correct the relay address or the scope network so that giaddr maps to the right pool."
+    },
+    {
+      "id": "no_offer_received",
+      "label": "OFFER not received (lossy path)",
+      "detail": "The OFFER is sent but dropped — a filter, a broken return path, or a client with a firewall issue.",
+      "breaks_at": "request",
+      "symptom": "The client retransmits DISCOVERs although the server log shows OFFERs being sent; the exchange never advances to REQUEST.",
+      "diagnosis": "Capture on both sides: the server sees the DISCOVER and sends an OFFER, the client never sees it. That localises the loss to the path.",
+      "fix": "Remove the filter or fix the return path; verify with a capture on the client."
+    },
+    {
+      "id": "relay_misconfigured",
+      "label": "DHCP relay misconfigured",
+      "detail": "The relay forwards to the wrong server address, or does not set giaddr, or is absent.",
+      "breaks_at": "offer",
+      "symptom": "Clients in one VLAN fail while the server's own VLAN works. The server sees no DISCOVER for the affected subnet at all.",
+      "diagnosis": "Check the relay/helper address on the gateway SVI; capture at the server to see whether any DISCOVER arrives with that giaddr.",
+      "fix": "Correct the helper address and confirm giaddr matches the client subnet."
+    },
+    {
+      "id": "bad_gateway_option",
+      "label": "Incorrect gateway / DNS option",
+      "detail": "Option 3 points at a decommissioned router, or option 6 at a dead resolver.",
+      "breaks_at": "after_ack",
+      "symptom": "The client has a valid address and can reach its own subnet. Bad option 3: nothing off-link works. Bad option 6: IP literals work but names fail.",
+      "diagnosis": "ip route for the default gateway, ip route get for the next hop, /etc/resolv.conf or resolvectl for the resolver. Compare against what the scope should provide.",
+      "fix": "Correct the scope option. This is a server-side fix and applies to every client at once."
+    }
+  ]
+}

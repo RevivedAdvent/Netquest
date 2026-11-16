@@ -1,0 +1,230 @@
+{
+  "journeys": [
+    {
+      "id": "laptop-joins",
+      "title": "A laptop joins the network and loads a page",
+      "tagline": "Eleven steps from a cable being plugged in to a rendered HTTPS page.",
+      "minutes": 12,
+      "summary": "This is the single most useful mental model in the whole course. Almost every 'the network is broken' ticket is one of these steps failing, and the step that fails first tells you which layer to work on.",
+      "module_ids": ["m1", "m2", "m3", "m4"],
+      "layers": ["L1", "L2", "L3", "L4", "L7"],
+      "steps": [
+        {
+          "n": 1,
+          "title": "Link comes up",
+          "layer": "L1/L2",
+          "detail": "The NIC negotiates speed and duplex, the port leaves the down state, and the switch learns the laptop's MAC on that port. Nothing above Layer 2 can work until this succeeds.",
+          "command": "ip -brief link show dev eth0; ethtool eth0 | grep -E 'Speed|Duplex|Link detected'",
+          "fails_when": "Speed/duplex mismatch, bad cable, disabled port, or the port in the wrong VLAN."
+        },
+        {
+          "n": 2,
+          "title": "DHCPDISCOVER is broadcast",
+          "layer": "L3 (bootstrap)",
+          "detail": "The host has no address, so it broadcasts from 0.0.0.0:68 to 255.255.255.255:67. If the server is on another subnet, a relay must carry it.",
+          "command": "sudo tcpdump -ni eth0 port 67 or port 68",
+          "fails_when": "No relay (ip helper-address) on the gateway, no server, or the broadcast is filtered."
+        },
+        {
+          "n": 3,
+          "title": "DORA completes and the lease is applied",
+          "layer": "L3",
+          "detail": "OFFER reserves an address; REQUEST selects it; ACK commits it. The client now installs an address, a connected route, and a default route via option 3, plus resolvers from option 6.",
+          "command": "ip -brief address; ip route",
+          "fails_when": "Pool exhausted, wrong scope (bad relay mapping), or bad options 3/6. A 169.254 address means none of this happened."
+        },
+        {
+          "n": 4,
+          "title": "ARP resolves the gateway",
+          "layer": "L2/L3",
+          "detail": "The destination is off-link, so the host ARPs for its default gateway and caches the mapping. A wrong mask changes this decision and makes the gateway look off-link.",
+          "command": "ip neigh show; arping -I eth0 10.0.10.1",
+          "fails_when": "Wrong mask, duplicate IP, a gateway that does not exist, or a VLAN mismatch."
+        },
+        {
+          "n": 5,
+          "title": "Frame is switched to the router",
+          "layer": "L2",
+          "detail": "The switch looks up the gateway's MAC and forwards out the correct port. VLAN tags are stripped on access ports, so the router receives an untagged frame on its subinterface.",
+          "command": "show mac address-table | include <gw-mac>",
+          "fails_when": "Unknown MAC flooding, a MAC table loop, or the port assigned to the wrong VLAN."
+        },
+        {
+          "n": 6,
+          "title": "Packet is routed hop by hop",
+          "layer": "L3",
+          "detail": "Each router applies longest prefix match and rewrites the Layer 2 header for the next hop. The source and destination IPs stay the same; the TTL decrements.",
+          "command": "traceroute -n 203.0.113.20; ip route get 203.0.113.20",
+          "fails_when": "Missing route, missing return route, wrong next hop, or a loop that exhausts the TTL."
+        },
+        {
+          "n": 7,
+          "title": "NAT rewrites the source (at the edge)",
+          "layer": "L3/L4",
+          "detail": "The edge router translates the private source to a public address and tracks the mapping in a state table, then reverses it for the reply. Inbound traffic without a mapping or port forward is dropped.",
+          "command": "conntrack -L | head; nft list ruleset | head -30",
+          "fails_when": "No port forward for a hosted service, or state table exhaustion."
+        },
+        {
+          "n": 8,
+          "title": "Name is resolved",
+          "layer": "L7 (support)",
+          "detail": "NSS checks /etc/hosts, then asks the configured resolver, which answers from cache or walks the hierarchy. A cached answer skips the whole walk.",
+          "command": "getent hosts example.com; dig +trace example.com",
+          "fails_when": "Wrong resolver, split horizon, NXDOMAIN on a real name, or a timeout to an unreachable forwarder."
+        },
+        {
+          "n": 9,
+          "title": "TCP connection is established",
+          "layer": "L4",
+          "detail": "SYN, SYN-ACK, ACK. The client learns the server is reachable, the path MTU, and the MSS. A timeout here means silence; a refusal means an active no.",
+          "command": "ss -tn state syn-sent; sudo tcpdump -ni eth0 'tcp[tcpflags] & tcp-syn != 0'",
+          "fails_when": "Nothing listening on that address:port, a firewall DROP, or an MTU black hole for the handshake."
+        },
+        {
+          "n": 10,
+          "title": "TLS handshake",
+          "layer": "L4-L7",
+          "detail": "Certificate exchange and key agreement. Failures here look like 'the site hangs' to users but the evidence is specific: a certificate error, a protocol mismatch, or a stalled handshake at a predictable byte count.",
+          "command": "openssl s_client -connect example.com:443 -servername example.com </dev/null",
+          "fails_when": "Expired or wrong-name certificate, untrusted chain, or an old TLS version."
+        },
+        {
+          "n": 11,
+          "title": "HTTP request and response",
+          "layer": "L7",
+          "detail": "The application answers. Only now do status codes, headers and payloads matter. Everything earlier was prerequisites.",
+          "command": "curl -sv https://example.com -o /dev/null",
+          "fails_when": "Application errors, a proxy in the path, or an incorrect Host header."
+        }
+      ],
+      "breakpoints": [
+        {"symptom": "No address, 169.254.x.x", "cause": "Step 2 or 3: DHCP never completed. Check the relay, then the pool."},
+        {"symptom": "Address is fine, gateway unreachable", "cause": "Step 4: ARP fails. Wrong mask, wrong VLAN, or a gateway that does not exist."},
+        {"symptom": "ping by IP works, name fails", "cause": "Step 8: resolution. Check which resolver is actually in use."},
+        {"symptom": "Connection times out rather than refusing", "cause": "Step 9: silence — no listener on that address, or a DROP rule, or MTU."},
+        {"symptom": "Small requests work, large ones hang", "cause": "Step 9/10: MTU black hole. Sweep with ping -M do."}
+      ],
+      "key_questions": [
+        "Which step fails first, and what does that prove about everything above it?",
+        "What is the difference between 'no address', 'no route', 'no listener' and 'no name'?",
+        "Which commands would let you test steps 3, 4, 8 and 9 independently?"
+      ]
+    },
+    {
+      "id": "dns-internals",
+      "title": "One name, four places it can be answered",
+      "tagline": "Hosts file, cache, hierarchy, authoritative — and the failure mode of each.",
+      "minutes": 9,
+      "summary": "DNS is not one lookup. It is a chain of shortcuts, and knowing which shortcut answered determines both why it was fast and why it was wrong.",
+      "module_ids": ["m3"],
+      "layers": ["L7"],
+      "steps": [
+        {"n": 1, "title": "NSS decides who to ask", "layer": "L7", "detail": "/etc/nsswitch.conf defines the order: files, then mdns, then resolved or dns. Whichever entry answers first wins, and later sources are never consulted.", "command": "grep '^hosts' /etc/nsswitch.conf", "fails_when": "A stale /etc/hosts entry overrides DNS silently — the classic 'it works for everyone except me'."},
+        {"n": 2, "title": "Hosts file", "layer": "L7", "detail": "A literal static table. It never expires and it never fails. Perfect for a temporary override, dangerous when forgotten.", "command": "getent hosts app.corp.example", "fails_when": "Nothing — it always answers. That is exactly the risk."},
+        {"n": 3, "title": "Resolver cache", "layer": "L7", "detail": "The recursive resolver answers from cache with the remaining TTL. This is why the second lookup is instant and why a change appears to 'propagate'.", "command": "dig +noall +answer @10.10.0.53 app.corp.example", "fails_when": "Stale entries until TTL expiry, or a wrong value cached by a broken upstream."},
+        {"n": 4, "title": "Root referral", "layer": "L7", "detail": "The root servers do not know the answer. They return a delegation to the TLD servers responsible for the next label.", "command": "dig +trace www.example.com | head -20", "fails_when": "A lame or unreachable root (rare) — usually a symptom of a broken forwarder."},
+        {"n": 5, "title": "TLD referral", "layer": "L7", "detail": "The TLD servers return the authoritative nameservers for the zone. Getting past this step proves the delegation exists and is correct.", "command": "dig @a.gtld-servers.net www.example.com NS", "fails_when": "Wrong or missing NS records at the registrar — commonly seen as SERVFAIL from public resolvers."},
+        {"n": 6, "title": "Authoritative answer", "layer": "L7", "detail": "The zone's own server answers with the AA flag, or with an explicit negative answer carrying the SOA. This is the only place the truth lives.", "command": "dig @ns1.example.com www.example.com A", "fails_when": "A missing record (NXDOMAIN), a missing type (NODATA), a broken CNAME target, or a DNSSEC validation failure."}
+      ],
+      "breakpoints": [
+        {"symptom": "Works on one machine, not another", "cause": "Step 1 or 2: hosts file or nsswitch order differs."},
+        {"symptom": "Second lookup is instant, first is slow", "cause": "Step 3: cache. The first query pays for the walk."},
+        {"symptom": "Old IP for up to an hour", "cause": "Step 3: TTL. The cache is doing exactly its job."},
+        {"symptom": "NXDOMAIN from a public resolver, works internally", "cause": "Step 5/6: split horizon. The name only exists in the internal view."},
+        {"symptom": "SERVFAIL from every public resolver", "cause": "Step 5/6: broken delegation or DNSSEC."},
+        {"symptom": "Five-second stalls then success", "cause": "Step 3: the forwarder's upstream is unreachable and each cold lookup waits for a timeout."}
+      ],
+      "key_questions": [
+        "Which stage answered, and how do you prove it rather than assume it?",
+        "Why can NXDOMAIN and 'does not exist' mean two different things?",
+        "What must you check before changing a record that many clients depend on?"
+      ]
+    },
+    {
+      "id": "packet-across-sites",
+      "title": "A packet crosses two sites",
+      "tagline": "Routing, tunnels, MTU and NAT: everything that changes a packet between two buildings.",
+      "minutes": 10,
+      "summary": "Site-to-site connectivity adds three things to the local model: an extra routed hop, an encapsulation that shrinks the MTU, and possibly address translation. Each has its own failure signature.",
+      "module_ids": ["m5", "m4"],
+      "layers": ["L2", "L3", "L4"],
+      "steps": [
+        {"n": 1, "title": "Host selects a source and a next hop", "layer": "L3", "detail": "The routing table chooses the egress interface and source address. With one default route this looks trivial, but the source address chosen is what the return path must reach.", "command": "ip route get 10.20.0.80", "fails_when": "Wrong source address selected on a multi-homed host, so replies return via the wrong interface."},
+        {"n": 2, "title": "Edge router encrypts into the tunnel", "layer": "L3", "detail": "The original packet becomes the payload of a new packet. The tunnel's outer headers consume 60-80 bytes, which is exactly why the usable MTU falls to about 1400.", "command": "ip -s xfrm state; show crypto ipsec sa", "fails_when": "Tunnel down (no matching SA), or MTU configured larger than the tunnel can carry."},
+        {"n": 3, "title": "Inner packet is routed at the far end", "layer": "L3", "detail": "The receiving edge decrypts and routes the original packet onward. Both edges need routes for both sites, and the far edge needs a return route for your source subnet.", "command": "traceroute -n 10.20.0.80", "fails_when": "Asymmetric routing: no return route on the far edge, so replies die at the last hop."},
+        {"n": 4, "title": "Path MTU discovery runs", "layer": "L3/L4", "detail": "Hosts with DF set rely on ICMP fragmentation-needed to learn the smaller MTU. If that ICMP is filtered, large packets vanish and TCP retransmits the same oversized segment.", "command": "tracepath -n 10.20.0.80; ping -M do -s 1372 10.20.0.80", "fails_when": "PMTUD black hole: works small, hangs large, no error anywhere."},
+        {"n": 5, "title": "NAT or no NAT", "layer": "L3/L4", "detail": "If either site translates addresses, return traffic must match a state entry. Site-to-site tunnels usually avoid NAT, but a misconfigured rule silently rewrites the source and breaks the return path.", "command": "conntrack -L | grep 10.20.0.80; nft list ruleset", "fails_when": "One-directional connectivity, or connections that establish then time out."},
+        {"n": 6, "title": "TCP adapts to what it measures", "layer": "L4", "detail": "RTT determines the window growth rate. 40ms RTT with 1% loss gives poor throughput even on a fast link, because loss is read as congestion.", "command": "ss -ti dst 10.20.0.80", "fails_when": "Throughput far below link capacity with rising retransmissions — a loss or RTT problem, not bandwidth."}
+      ],
+      "breakpoints": [
+        {"symptom": "Works one way only", "cause": "Step 3: no return route on the far edge, or asymmetric NAT."},
+        {"symptom": "Small requests fine, large transfers stall", "cause": "Step 4: MTU black hole in the tunnel."},
+        {"symptom": "Tunnel up but no traffic passes", "cause": "Step 2: encryption domain mismatch — the interesting traffic is not being selected."},
+        {"symptom": "Throughput is a fraction of link speed with low RTT", "cause": "Step 6: packet loss being read as congestion, often from a duplex or policer problem."}
+      ],
+      "key_questions": [
+        "Which encapsulation on this path reduces the MTU, and by how much?",
+        "How do you prove the return path exists rather than hoping it does?",
+        "Why does 1% loss hurt throughput so much more than it hurts ping?"
+      ]
+    },
+    {
+      "id": "service-unreachable",
+      "title": "Bottom-up triage of an unreachable service",
+      "tagline": "A repeatable order of operations that avoids guessing.",
+      "minutes": 8,
+      "summary": "Triage is not a list of commands; it is a decision tree. Each check either eliminates a layer or localises the fault, and you stop as soon as the answer is unambiguous.",
+      "module_ids": ["m4", "m1"],
+      "layers": ["L1-L7"],
+      "steps": [
+        {"n": 1, "title": "Define the failure precisely", "layer": "process", "detail": "Which source, which destination, which port and protocol, and does it fail always or sometimes? 'The app is down' is not a symptom; 'TCP 443 to 10.20.0.80 times out from VLAN 10 but works from VLAN 20' is.", "command": "curl -sv --max-time 5 https://10.20.0.80/", "fails_when": "You skip this and spend an hour testing the wrong path."},
+        {"n": 2, "title": "Is the name or the address the problem?", "layer": "L7", "detail": "Test the IP first. If the IP works and the name does not, you are in DNS and nothing else matters yet.", "command": "getent hosts app.example; curl -s -o /dev/null -w '%{http_code}\\n' https://10.20.0.80/", "fails_when": "You debug routing when the actual problem was a stale record."},
+        {"n": 3, "title": "Is the destination reachable at all?", "layer": "L3", "detail": "Ping tells you about ICMP and the forward path. Its absence does not prove the service is down, and its presence does not prove the service is up.", "command": "ping -c3 10.20.0.80; traceroute -n 10.20.0.80", "fails_when": "You treat a blocked ICMP as proof of an outage, or a successful ping as proof of health."},
+        {"n": 4, "title": "Is anything listening on that port?", "layer": "L4", "detail": "Check from the server side first: ss -lntp shows the bind address. A loopback-only listener is invisible to the network.", "command": "ss -lntp | grep 443", "fails_when": "The service is bound to 127.0.0.1, or not started at all."},
+        {"n": 5, "title": "Does the connection attempt reach the host?", "layer": "L3/L4", "detail": "Capture at the destination. SYNs arriving with no reply localise the fault to the host. No SYNs localise it to the path or the source.", "command": "sudo tcpdump -ni eth0 tcp port 443 -c 5", "fails_when": "You keep testing from the client and never look at the far end."},
+        {"n": 6, "title": "Is the host firewall or policy involved?", "layer": "L4", "detail": "A DROP gives a timeout; a REJECT gives an immediate refusal. The timing is the evidence.", "command": "sudo firewall-cmd --list-all; nft list ruleset", "fails_when": "You disable the firewall instead of opening one port."},
+        {"n": 7, "title": "Is the payload the problem?", "layer": "L4-L7", "detail": "If the handshake succeeds but the transfer stalls at a consistent size, suspect MTU. If it stalls at a consistent time, suspect a proxy or a timeout.", "command": "ping -M do -s 1372 10.20.0.80; curl -v --data-binary @big.bin https://10.20.0.80/upload", "fails_when": "You blame the application for what is an MTU black hole."}
+      ],
+      "breakpoints": [
+        {"symptom": "Refused immediately", "cause": "Step 6: an active no — firewall REJECT, or nothing listening with no filter."},
+        {"symptom": "Times out", "cause": "Step 4/5/6: silence — wrong bind address, DROP rule, or a blackhole route."},
+        {"symptom": "Handshake fine, transfer hangs", "cause": "Step 7: MTU, or an application-level timeout."},
+        {"symptom": "Works from one subnet only", "cause": "Step 3: asymmetric routing, NAT, or an ACL between segments."}
+      ],
+      "key_questions": [
+        "What is the earliest layer at which you have positive evidence of failure?",
+        "Which single check would eliminate the most remaining possibilities?",
+        "What evidence would change your mind?"
+      ]
+    },
+    {
+      "id": "file-to-disk",
+      "title": "What happens when a service writes a file",
+      "tagline": "Process, descriptor, VFS, mode bits, ACLs, SELinux, filesystem.",
+      "minutes": 8,
+      "summary": "Linux permission problems are usually a chain, and the error message names none of the links. This walk shows the order in which the kernel decides.",
+      "module_ids": ["m6", "m7"],
+      "layers": ["process", "VFS"],
+      "steps": [
+        {"n": 1, "title": "The process has an identity", "layer": "process", "detail": "Real UID, effective UID and supplementary groups decide everything that follows. systemd units set this explicitly, and a service started by hand inherits your identity instead.", "command": "ps -o pid,user,group,cmd -p PID; systemctl show -p User,Group myapp", "fails_when": "The unit runs as one user while you test as another — the most common 'works for me'."},
+        {"n": 2, "title": "It opens a path, not a file", "layer": "VFS", "detail": "Every directory component needs execute (search) permission. A missing +x on one parent directory produces EACCES even though the final file looks fine.", "command": "namei -l /etc/myapp/app.conf", "fails_when": "A directory in the path is not traversable for that identity."},
+        {"n": 3, "title": "Mode bits are evaluated in order", "layer": "VFS", "detail": "If you are the owner, only owner bits apply. Else if in the group, only group bits apply. Else others. They are not additive across classes.", "command": "ls -l /etc/myapp/app.conf; id svcapp", "fails_when": "You assume group rights help when the process is the owner with restrictive owner bits."},
+        {"n": 4, "title": "ACLs refine the answer", "layer": "VFS", "detail": "A named-user or mask entry can grant or remove access outside the mode bits. The mask is the ceiling for everything except the owner.", "command": "getfacl -p /etc/myapp/app.conf", "fails_when": "A permissive group bit is masked to r-- by the ACL mask."},
+        {"n": 5, "title": "SELinux has the final say", "layer": "MAC", "detail": "The process domain must be allowed to use the file type. A correct-looking file with the wrong type is still denied, and the denial is logged as an AVC.", "command": "ls -Z /etc/myapp/app.conf; sudo ausearch -m avc -ts recent", "fails_when": "Files restored without xattrs get default labels, producing EACCES with correct mode bits."},
+        {"n": 6, "title": "The filesystem itself can refuse", "layer": "VFS", "detail": "A read-only mount, a full disk, an immutable attribute or a quota limit all fail at this stage. These are not permission problems even though they look like write failures.", "command": "findmnt -T /var/lib/myapp; df -h /var/lib/myapp; lsattr", "fails_when": "You chase permissions when the filesystem was remounted read-only after an IO error."}
+      ],
+      "breakpoints": [
+        {"symptom": "EACCES but mode bits allow it", "cause": "Step 5: SELinux label, or step 2: a non-traversable parent directory."},
+        {"symptom": "Works as root, fails as the service user", "cause": "Step 1 or 3: identity assumptions. Test as the service user, not as yourself."},
+        {"symptom": "Read-only file system", "cause": "Step 6: the mount is read-only, often after a disk error."},
+        {"symptom": "Permission denied on a symlink", "cause": "The target's permissions and labels apply, not the link's."}
+      ],
+      "key_questions": [
+        "In what order does the kernel evaluate the checks on this path?",
+        "What evidence distinguishes a mode-bit problem from a label problem?",
+        "Why is 'run it as root' never the answer to a permission failure?"
+      ]
+    }
+  ]
+}

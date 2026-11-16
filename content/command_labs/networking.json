@@ -1,0 +1,542 @@
+{
+  "labs": [
+    {
+      "id": "ip-addr",
+      "command": "ip addr",
+      "group": "Network inspection",
+      "module_id": "m1",
+      "tagline": "Which addresses does this host actually have?",
+      "problem": "You need to know what IP addresses, masks and interface state exist right now, including secondary addresses and IPv6.",
+      "how": "Reads the kernel's interface configuration from netlink and prints per-interface address lists with state, MTU and flags. It changes nothing.",
+      "syntax": "ip addr [show [dev IFACE]]",
+      "flags": [
+        {
+          "flag": "-4 / -6",
+          "why": "Show only IPv4 or only IPv6 addresses."
+        },
+        {
+          "flag": "dev IFACE",
+          "why": "Limit to one interface, e.g. dev eth0."
+        },
+        {
+          "flag": "-br",
+          "why": "Brief one-line-per-interface output, easier to paste into a ticket."
+        },
+        {
+          "flag": "-s",
+          "why": "Include statistics such as error and drop counters."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "ip -br addr",
+          "note": "Quick overview of every interface and its addresses."
+        },
+        {
+          "cmd": "ip addr show dev eth0",
+          "note": "Full detail for one interface."
+        },
+        {
+          "cmd": "ip -4 addr show",
+          "note": "IPv4 only, which is what DHCP troubleshooting needs."
+        }
+      ],
+      "sample": "$ ip -br addr\nlo               UNKNOWN        127.0.0.1/8 ::1/128\neth0             UP             192.168.1.42/24 fe80::5054:ff:fe12:3456/64\nwlan0            DOWN",
+      "read": [
+        "Left column is the interface name; the word after it is administrative/operational state (UP, DOWN, UNKNOWN).",
+        "An address with a /nn suffix is the prefix length, i.e. the mask. 192.168.1.42/24 means the network is 192.168.1.0/24.",
+        "fe80:: addresses are IPv6 link-local, present on every IPv6-enabled interface and not a sign of a problem.",
+        "scope link, scope global and the word dynamic (for DHCP leases) describe the origin of the address.",
+        "A valid_lft/preferred_lft pair on IPv6 addresses shows remaining lifetime."
+      ],
+      "mistakes": [
+        "Assuming an interface is fine because it has an address: state DOWN or NO-CARRIER can coexist with a stale address.",
+        "Confusing /24 with a subnet mask by eye. The number after the slash is the count of network bits, not a mask octet.",
+        "Overlooking a second address on the same interface (common with VPNs and container bridges)."
+      ],
+      "when": "First command in almost any network investigation; before and after any change.",
+      "followups": [
+        "ip route",
+        "ip link",
+        "ip neigh"
+      ],
+      "try": {
+        "scenario": "You want a five-line summary of your machine's addressing, including which interface carries your default route.",
+        "task": "Run the brief form of ip addr, then find the interface used by the default route.",
+        "command": "ip -br addr; ip route | head -3",
+        "expected_patterns": [
+          {
+            "pattern": "(?m)^\\S+\\s+(UP|DOWN|UNKNOWN|LOWERLAYERDOWN)",
+            "label": "at least one interface line with a state"
+          },
+          {
+            "pattern": "\\b\\d{1,3}(\\.\\d{1,3}){3}/\\d{1,2}\\b",
+            "label": "an IPv4 address with a prefix length"
+          },
+          {
+            "pattern": "(?m)^(default|0\\.0\\.0\\.0/0)\\b",
+            "label": "a default route line"
+          }
+        ],
+        "verdict_ok": "You have the interface state, at least one address/mask and the default route — the three facts needed to start any connectivity diagnosis.",
+        "verdict_missing": "Some of that evidence is missing. Paste the complete output including the default route line."
+      },
+      "simulate": {
+        "intro": "A host prints the following. Answer from the output alone — no guessing.",
+        "terminal": "$ ip -br addr\nlo               UNKNOWN        127.0.0.1/8 ::1/128\neth0             UP             10.50.3.77/24 fe80::5054:ff:fe12:3456/64\nwg0              UNKNOWN        10.8.0.4/24",
+        "questions": [
+          {
+            "id": "lab-ipaddr-s1",
+            "prompt": "What is the subnet mask of eth0 in dotted-decimal form?",
+            "options": [
+              "255.255.255.0",
+              "255.255.255.128",
+              "255.0.0.0",
+              "255.255.0.0"
+            ],
+            "answer": 0,
+            "explanation": "/24 means 24 network bits, which is 255.255.255.0.",
+            "why_wrong": {
+              "3": "That is /16.",
+              "1": "That is /25.",
+              "2": "That is /8."
+            }
+          },
+          {
+            "id": "lab-ipaddr-s2",
+            "prompt": "What does the absence of a 'default' route in this output tell you?",
+            "options": [
+              "The host has no IPv4 address",
+              "The interface is down",
+              "The host has no off-link connectivity path configured",
+              "DNS is broken"
+            ],
+            "answer": 2,
+            "explanation": "Without a default route, only directly connected prefixes are reachable. This command does not print routes at all, so it must be checked with ip route.",
+            "why_wrong": {
+              "0": "eth0 clearly has 10.50.3.77/24.",
+              "1": "eth0 shows UP.",
+              "3": "Nothing here concerns DNS."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "Users on 10.50.3.0/24 report they can reach each other but nothing outside. eth0 shows 10.50.3.77/24 UP. Which command decides between 'missing default route' and 'broken gateway'?",
+        "question": "Which single next command is most informative?",
+        "options": [
+          "dig example.com",
+          "ss -ltnp",
+          "ip route",
+          "systemctl status NetworkManager"
+        ],
+        "answer": 2,
+        "explanation": "ip route shows whether a default route exists and what its next hop is. DNS and listening sockets cannot help until routing is understood.",
+        "why_wrong": {
+          "0": "DNS requires routing first.",
+          "1": "No service is in question yet.",
+          "3": "The manager is a later concern; the routing table is the direct evidence."
+        }
+      }
+    },
+    {
+      "id": "ip-link",
+      "command": "ip link",
+      "group": "Network inspection",
+      "module_id": "m2",
+      "tagline": "Is the interface up, and is there carrier?",
+      "problem": "You need to separate 'administratively down' from 'no cable / no link partner', and read error counters.",
+      "how": "Shows link-layer state per interface: MTU, flags, ARP state, carrier detection and optional statistics.",
+      "syntax": "ip link [show [dev IFACE]]",
+      "flags": [
+        {
+          "flag": "-s",
+          "why": "Include RX/TX bytes, packets, errors and drops."
+        },
+        {
+          "flag": "-br",
+          "why": "One line per interface, easy to scan."
+        },
+        {
+          "flag": "set dev IFACE up|down",
+          "why": "Change administrative state (this is a change, not an inspection)."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "ip -br link",
+          "note": "Fast check of UP/DOWN/LOWER_UP per interface."
+        },
+        {
+          "cmd": "ip -s link show eth0",
+          "note": "Look at errors and drops, not just bytes."
+        }
+      ],
+      "sample": "$ ip -br link\nlo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP>\neth0             UP             52:54:00:12:34:56 <BROADCAST,MULTICAST,UP,LOWER_UP>\neth1             DOWN           52:54:00:12:34:57 <BROADCAST,MULTICAST>",
+      "read": [
+        "UP means the interface is administratively enabled; LOWER_UP means carrier is detected (cable/link partner present).",
+        "UP without LOWER_UP is the classic 'plugged in but no link' state — check cable, switch port, VLAN or virtualisation.",
+        "MTU is shown in the full output; unexpected values (e.g. 9000 on one side only) explain large-packet failures.",
+        "With -s, growing 'errors' or 'dropped' counters point at physical or driver problems, not at routing."
+      ],
+      "mistakes": [
+        "Reading UP as 'working'. Carrier is the meaningful half.",
+        "Ignoring the MTU column when investigating 'large transfers hang'.",
+        "Running `ip link set ... up` as a diagnostic — it is a change, and you may disconnect yourself."
+      ],
+      "when": "First, before addresses. If there is no carrier, nothing above it matters.",
+      "followups": [
+        "ip addr",
+        "ethtool eth0",
+        "journalctl -k | tail"
+      ],
+      "try": {
+        "scenario": "You want to prove your wired interface has carrier and check for error counters.",
+        "task": "Show brief link state, then statistics for the main interface.",
+        "command": "ip -br link; ip -s link show $(ip route | awk '/^default/{print $5; exit}')",
+        "expected_patterns": [
+          {
+            "pattern": "LOWER_UP",
+            "label": "an interface with carrier (LOWER_UP)"
+          },
+          {
+            "pattern": "(?i)(RX|TX):",
+            "label": "the statistics sections (RX/TX)"
+          },
+          {
+            "pattern": "\\berrors\\b",
+            "label": "the errors counter row"
+          }
+        ],
+        "verdict_ok": "Carrier is confirmed and you have the error counters to compare after a change.",
+        "verdict_missing": "You may have pasted only the brief output. Include the -s statistics block."
+      },
+      "simulate": {
+        "intro": "Read the interface state and decide what the fault is.",
+        "terminal": "$ ip -br link\nlo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP>\neth0             UP             52:54:00:12:34:56 <BROADCAST,MULTICAST,UP,LOWER_UP>\neth1             UP             52:54:00:12:34:57 <BROADCAST,MULTICAST,UP>\n\n$ ip -s link show eth1\n2: eth1: <BROADCAST,MULTICAST,UP> mtu 1500 qdisc fq_codel state UP\n    RX:  bytes packets errors dropped missed mcast\n         0       0      0       0       0     0\n    TX:  bytes packets errors dropped carrier collsns\n       342      4      0       0       18     0",
+        "questions": [
+          {
+            "id": "lab-iplink-s1",
+            "prompt": "What is wrong with eth1?",
+            "options": [
+              "It has no carrier, so no packets are being received",
+              "Its MTU is wrong",
+              "It has a bad IP address",
+              "It is administratively down"
+            ],
+            "answer": 0,
+            "explanation": "eth1 is UP but lacks LOWER_UP; RX bytes are zero and TX shows carrier errors (18). That is a physical/link problem.",
+            "why_wrong": {
+              "2": "No address is involved in this output.",
+              "3": "It is UP, not DOWN.",
+              "1": "MTU is a normal 1500."
+            }
+          },
+          {
+            "id": "lab-iplink-s2",
+            "prompt": "What does the '18' in the TX carrier column mean?",
+            "options": [
+              "18 bytes were lost",
+              "18 VLAN tags were stripped",
+              "18 collisions occurred",
+              "18 packets failed because carrier was absent when transmission was attempted"
+            ],
+            "answer": 3,
+            "explanation": "The carrier counter records transmission attempts that failed because the link had no carrier at that moment.",
+            "why_wrong": {
+              "2": "Collisions have their own column.",
+              "0": "Byte counts are in the first column.",
+              "1": "Nothing here relates to VLAN tags."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "A server is unreachable. `ip -br link` shows eth0 UP but without LOWER_UP, and eth0 still holds its old address.",
+        "question": "What do you investigate next?",
+        "options": [
+          "The application's listening port",
+          "The physical link and its peer: cable, switch port state, VLAN assignment",
+          "The DNS resolver configuration",
+          "The routing table on the default gateway"
+        ],
+        "answer": 1,
+        "explanation": "No carrier is a Layer 1/2 problem. Nothing above it can work, and the stale address is just a leftover.",
+        "why_wrong": {
+          "2": "DNS needs working transport.",
+          "3": "Remote configuration cannot fix a local lack of carrier.",
+          "0": "The application is not reachable at all without link."
+        }
+      }
+    },
+    {
+      "id": "ip-route",
+      "command": "ip route",
+      "group": "Routing",
+      "module_id": "m5",
+      "tagline": "Where will this packet actually go?",
+      "problem": "You need to know the kernel's forwarding decisions: connected prefixes, default route, static routes and metrics.",
+      "how": "Prints the routing table(s). `ip route get` performs a lookup for a specific destination and shows the decision.",
+      "syntax": "ip route [show [PREFIX]] | ip route get DEST",
+      "flags": [
+        {
+          "flag": "get DEST",
+          "why": "Run the lookup without sending traffic; shows interface, next hop and source address."
+        },
+        {
+          "flag": "show table all",
+          "why": "Include policy-routing tables, not just the main one."
+        },
+        {
+          "flag": "-4 / -6",
+          "why": "Filter address family."
+        },
+        {
+          "flag": "proto kernel",
+          "why": "Show only auto-generated connected routes."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "ip route",
+          "note": "The main table."
+        },
+        {
+          "cmd": "ip route get 8.8.8.8",
+          "note": "Which gateway and source address would be used?"
+        },
+        {
+          "cmd": "ip route show 10.0.0.0/8",
+          "note": "Do I have a route for this prefix?"
+        }
+      ],
+      "sample": "$ ip route\ndefault via 192.168.1.1 dev eth0 proto dhcp src 192.168.1.42 metric 100\n192.168.1.0/24 dev eth0 proto kernel scope link src 192.168.1.42 metric 100\n10.8.0.0/24 via 10.8.0.1 dev tun0 metric 50\n\n$ ip route get 10.8.0.9\n10.8.0.9 via 10.8.0.1 dev tun0 src 10.8.0.4",
+      "read": [
+        "No 'via' means the destination is on-link: the host ARPs for the destination itself.",
+        "'via' gives the next hop; 'dev' gives the egress interface.",
+        "proto kernel routes are generated from interface addresses; proto dhcp from DHCP options; proto static from configuration.",
+        "metric breaks ties between routes to the same prefix from the same source; it never beats a longer prefix.",
+        "ip route get prints the chosen source address (src), which explains source-address filtering problems."
+      ],
+      "mistakes": [
+        "Assuming the default route exists because DHCP gave an address — the gateway option may be missing.",
+        "Comparing metrics between different prefix lengths (they do not compete).",
+        "Ignoring policy routing tables (table all) on VPN and container hosts."
+      ],
+      "when": "Right after checking the address/mask, and whenever 'I can reach X but not Y'.",
+      "followups": [
+        "ip route get DEST",
+        "ping GATEWAY",
+        "ip neigh"
+      ],
+      "try": {
+        "scenario": "Prove where your machine sends traffic for an address outside every local subnet.",
+        "task": "Show the routing table and ask the kernel for its decision for 1.1.1.1.",
+        "command": "ip route; echo ---; ip route get 1.1.1.1",
+        "expected_patterns": [
+          {
+            "pattern": "(?m)^(default|0\\.0\\.0\\.0/0)\\b",
+            "label": "a default route entry"
+          },
+          {
+            "pattern": "\\bdev\\s+\\S+",
+            "label": "an egress interface in the route output"
+          },
+          {
+            "pattern": "\\bsrc\\s+\\d{1,3}(\\.\\d{1,3}){3}",
+            "label": "the chosen source address from ip route get"
+          }
+        ],
+        "verdict_ok": "You have the default route, the egress device and the source address the kernel would use.",
+        "verdict_missing": "Include both outputs; ip route get is the part that shows the actual decision."
+      },
+      "simulate": {
+        "intro": "Apply longest prefix match to this table.",
+        "terminal": "$ ip route\ndefault via 10.0.0.1 dev eth0 metric 100\n10.0.0.0/24 dev eth0 proto kernel scope link src 10.0.0.5\n10.1.0.0/16 via 10.0.0.2 dev eth0 metric 10\n10.1.2.0/24 via 10.0.0.3 dev eth0 metric 500",
+        "questions": [
+          {
+            "id": "lab-iproute-s1",
+            "prompt": "Where does a packet to 10.1.2.99 go?",
+            "options": [
+              "via 10.0.0.2",
+              "via 10.0.0.3",
+              "via 10.0.0.1",
+              "directly out eth0 without a gateway"
+            ],
+            "answer": 1,
+            "explanation": "10.1.2.0/24 matches and is longer than /16 and /0, so it wins even though its metric is worse.",
+            "why_wrong": {
+              "0": "That is the /16 route, used for 10.1.x outside 10.1.2.0/24.",
+              "2": "That is the default route.",
+              "3": "Only a connected route for the destination subnet would do that."
+            }
+          },
+          {
+            "id": "lab-iproute-s2",
+            "prompt": "Where does a packet to 10.1.9.9 go?",
+            "options": [
+              "via 10.0.0.1",
+              "Nowhere; it is dropped",
+              "via 10.0.0.3",
+              "via 10.0.0.2"
+            ],
+            "answer": 3,
+            "explanation": "The /16 route matches 10.1.9.9 and is more specific than the default.",
+            "why_wrong": {
+              "2": "10.1.2.0/24 does not contain 10.1.9.9.",
+              "0": "The default only applies when nothing more specific matches.",
+              "1": "A route exists."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "A host reaches 10.0.0.0/24 but nothing else, and `ip route` shows no default entry.",
+        "question": "What is the most likely root cause?",
+        "options": [
+          "The DHCP scope is missing the router/gateway option, so no default route was installed",
+          "The interface has no carrier",
+          "The switch is blocking the traffic",
+          "The DNS server is misconfigured"
+        ],
+        "answer": 0,
+        "explanation": "Local connectivity works, so the link and mask are fine. A missing default route on a DHCP client almost always means option 3 was absent or wrong.",
+        "why_wrong": {
+          "3": "DNS cannot create or remove routes.",
+          "1": "Local connectivity proves carrier.",
+          "2": "Switching does not decide off-link reachability."
+        }
+      }
+    },
+    {
+      "id": "ip-neigh",
+      "command": "ip neigh",
+      "group": "Network inspection",
+      "module_id": "m1",
+      "tagline": "Did the next hop answer ARP?",
+      "problem": "You need to prove whether Layer 2 resolution to the gateway or a local host is working.",
+      "how": "Prints the neighbour (ARP/NDP) cache with each entry's state. A FAILED entry means resolution was attempted and no reply arrived.",
+      "syntax": "ip neigh [show [dev IFACE]] [flush dev IFACE]",
+      "flags": [
+        {
+          "flag": "show dev eth0",
+          "why": "Restrict to one interface."
+        },
+        {
+          "flag": "flush dev eth0",
+          "why": "Clear the cache to force re-resolution (brief traffic interruption)."
+        },
+        {
+          "flag": "add ... lladdr ... nud permanent",
+          "why": "Create a static mapping (a change, not a diagnosis)."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "ip neigh show",
+          "note": "Full neighbour cache with states."
+        },
+        {
+          "cmd": "ip neigh show dev eth0 | head",
+          "note": "Focus on the segment that matters."
+        }
+      ],
+      "sample": "$ ip neigh show\n192.168.1.1 dev eth0 lladdr 52:54:00:aa:bb:01 REACHABLE\n192.168.1.77 dev eth0 lladdr 52:54:00:cc:dd:02 STALE\n10.9.0.1 dev eth0  FAILED",
+      "read": [
+        "REACHABLE means recently confirmed. STALE means known but not recently verified; traffic triggers revalidation and it usually still works.",
+        "INCOMPLETE means a request was sent and no reply has arrived yet. FAILED means resolution definitively failed.",
+        "A FAILED entry for the default gateway is one of the strongest diagnostics in networking: the problem is on the local segment.",
+        "No lladdr means no mapping exists yet."
+      ],
+      "mistakes": [
+        "Reading STALE as broken. STALE is normal.",
+        "Forgetting that the cache is per-interface and per-network-namespace.",
+        "Assuming a FAILED entry is a routing problem — it is a Layer 2 problem."
+      ],
+      "when": "Immediately after confirming there is a default route, to test the first hop.",
+      "followups": [
+        "ping GATEWAY",
+        "arping -I eth0 GATEWAY",
+        "sudo tcpdump -i eth0 -e arp"
+      ],
+      "try": {
+        "scenario": "Confirm your default gateway has a working Layer 2 mapping.",
+        "task": "Show the neighbour cache and ping the gateway once to confirm reachability.",
+        "command": "ip neigh show; GW=$(ip route | awk '/^default/{print $3; exit}'); echo \"gateway=$GW\"; ping -c1 -W2 \"$GW\"",
+        "expected_patterns": [
+          {
+            "pattern": "\\b(REACHABLE|STALE|DELAY|PROBE)\\b",
+            "label": "a resolved neighbour state"
+          },
+          {
+            "pattern": "lladdr",
+            "label": "a link-layer address mapping"
+          },
+          {
+            "pattern": "(1 packets transmitted, 1 received|1 received)",
+            "label": "a successful reply from the gateway"
+          }
+        ],
+        "verdict_ok": "Layer 2 to the gateway is confirmed and you have the mapping recorded.",
+        "verdict_missing": "Paste the neighbour table and the ping summary line."
+      },
+      "simulate": {
+        "intro": "Interpret the neighbour table before running anything else.",
+        "terminal": "$ ip neigh show dev eth0\n10.50.3.1 dev eth0 lladdr 52:54:00:aa:bb:01 REACHABLE\n10.50.3.20 dev eth0 lladdr 52:54:00:11:22:33 STALE\n10.50.3.55 dev eth0  FAILED\n\n$ ping -c1 10.50.3.55\nPING 10.50.3.55 (10.50.3.55) 56(84) bytes of data.\nFrom 10.50.3.77 icmp_seq=1 Destination Host Unreachable",
+        "questions": [
+          {
+            "id": "lab-ipneigh-s1",
+            "prompt": "What does FAILED plus 'Destination Host Unreachable' specifically tell you?",
+            "options": [
+              "The route to 10.50.3.55 is missing and it went to the default gateway",
+              "10.50.3.55 refused the connection",
+              "ARP for 10.50.3.55 got no reply, so the frame could not be delivered",
+              "DNS failed for 10.50.3.55"
+            ],
+            "answer": 2,
+            "explanation": "The kernel could not resolve the link-layer address, so it reports the destination as unreachable locally.",
+            "why_wrong": {
+              "0": "A missing route gives 'Network is unreachable'. Here the address is on-link.",
+              "1": "Refusal is a TCP concept on a specific port.",
+              "3": "No name resolution is involved."
+            }
+          },
+          {
+            "id": "lab-ipneigh-s2",
+            "prompt": "Which conclusion is NOT justified?",
+            "options": [
+              "The problem is confined to 10.50.3.55",
+              "Other hosts on 10.50.3.0/24 are reachable",
+              "The host 10.50.3.55 must be powered off",
+              "The local segment and gateway are healthy"
+            ],
+            "answer": 2,
+            "explanation": "The host could be off, or its NIC could be disabled, or a switch port could be disabled, or a port-security rule could be blocking it. Only the ARP silence is proven.",
+            "why_wrong": {
+              "3": "The gateway entry is REACHABLE, so the segment works.",
+              "0": "The failure is specific to one address.",
+              "1": "The gateway on the same subnet is reachable."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "After a VLAN change, one host cannot reach the gateway. `ip neigh` shows the gateway FAILED; the gateway answers ARP from another host in the same VLAN.",
+        "question": "What is the most productive next step?",
+        "options": [
+          "Check this host's switch port VLAN assignment and link, since Layer 2 is failing only for this host",
+          "Change the default route on the host",
+          "Restart the DNS resolver",
+          "Add a static ARP entry for the gateway"
+        ],
+        "answer": 0,
+        "explanation": "The gateway is reachable from another host in the VLAN, so the fault is specific to this host's Layer 2 path — typically a wrong access VLAN or a disabled port.",
+        "why_wrong": {
+          "1": "The route is fine; resolution fails.",
+          "2": "Unrelated.",
+          "3": "That masks the fault rather than diagnosing it."
+        }
+      }
+    }
+  ]
+}

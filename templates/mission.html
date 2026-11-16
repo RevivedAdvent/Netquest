@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% block title %}{{ mission.title }} — Case Study{% endblock %}
+{% block crumb %}Practise / <a href="/missions">Troubleshooting</a> / Case {{ '%02d' | format(mission.order) }}{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap-wide">
+  <div class="eyebrow">Case {{ '%02d' | format(mission.order) }} &middot; {{ mission.difficulty }}{% if module %} &middot; <a href="/learn/{{ module.id }}">{{ module.title }}</a>{% endif %}</div>
+  <h1 class="mt0">{{ mission.title }}</h1>
+  <p class="lead">{{ mission.tagline }}</p>
+
+  <div class="grid grid-hero">
+    <div>
+      <div class="card">
+        <div class="card-title"><h3 class="mt0">The report</h3>
+          <span class="badge {{ 'ok' if state.get('status') == 'solved' else 'warn' }}">{{ state.get('status', 'open') }}</span>
+        </div>
+        <ul class="mb16">
+          {% for s in mission.symptoms %}<li>{{ s }}</li>{% endfor %}
+        </ul>
+        <h4>Environment</h4>
+        <div class="pill-row mb16">
+          {% for e in mission.environment %}<span class="badge">{{ e }}</span>{% endfor %}
+        </div>
+        <h4>Topology</h4>
+        <div class="terminal">{{ mission.topology }}</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <h3 class="mt0">1. Collect evidence</h3>
+          <span class="badge mono"><span id="evCount">{{ collected | length }}</span>/{{ mission.evidence | length }}</span>
+        </div>
+        <p class="small">Run each command, then compare the output with what you expected. Some checks only make sense after another one — the case will tell you if you are jumping ahead.</p>
+        {% for e in mission.evidence %}
+        <div class="ev-block" data-eid="{{ e.id }}" style="border:1px solid #2c2c2c; border-radius:8px; padding:12px 14px; margin-bottom:10px">
+          <div class="split">
+            <b class="small">{{ e.label }}</b>
+            {% if e.id in collected %}
+            <span class="badge ok">collected</span>
+            {% else %}
+            <button class="btn small ev-collect" type="button" data-eid="{{ e.id }}">Run &amp; collect</button>
+            {% endif %}
+          </div>
+          <div class="mono small muted mt8">{{ e.command }}</div>
+          <div class="ev-out mt8">
+            {% if e.id in collected %}
+            <div class="terminal" style="max-height:none">{{ e.output }}</div>
+            <div class="note mt8 mb0"><b>What it means:</b> {{ e.insight }}</div>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="card">
+        <div class="card-title"><h3 class="mt0">2. Test your hypotheses</h3></div>
+        <p class="small">Do not collect evidence blindly. For each candidate explanation, decide what evidence would support or kill it — then check.</p>
+        {% for h in mission.hypotheses %}
+        <div class="split" style="padding:8px 0; border-bottom:1px solid #262626">
+          <div class="small" style="max-width:75%">{{ h.text }}</div>
+          <button class="btn small ghost hyp-test" type="button" data-idx="{{ loop.index0 }}">Test</button>
+        </div>
+        <div class="hyp-fb-{{ loop.index0 }}"></div>
+        {% endfor %}
+        <p class="small muted mt8 mb0">A hypothesis is not a diagnosis. You still have to say why, in your own words.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><h3 class="mt0">3. Commit to a diagnosis</h3></div>
+        <p class="small">State the root cause. Not "the network is slow" — name the mechanism and the layer. At least {{ mission.min_evidence }} pieces of evidence are required first.</p>
+        <textarea id="diagnosisText" class="prose" placeholder="The root cause is…  because…  which explains the symptom…"></textarea>
+        <div class="btn-row mt8">
+          <select id="confidence" style="max-width:180px">
+            <option value="low">Confidence: low</option>
+            <option value="medium" selected>Confidence: medium</option>
+            <option value="high">Confidence: high</option>
+          </select>
+          <button class="btn primary" id="diagnoseBtn" type="button">Submit diagnosis</button>
+        </div>
+        <div id="diagResult" class="mt16"></div>
+      </div>
+
+      <div class="card hidden" id="resolutionCard">
+        <div class="card-title"><h3 class="mt0">4. Choose the fix</h3><span class="badge warn">multiple answers possible</span></div>
+        <p class="small">Correct diagnoses are easy to find; correct fixes are not. Select every option you would actually apply. Workarounds lose points.</p>
+        <div id="resolutionOptions"></div>
+        <div class="btn-row mt16">
+          <button class="btn primary" id="resolutionBtn" type="button">Check the fix</button>
+        </div>
+        <div id="resolutionResult" class="mt16"></div>
+      </div>
+
+      <div class="card hidden" id="solutionCard"></div>
+    </div>
+
+    <div>
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">The framework</h3></div>
+        <ol class="small mb0">
+          {% for f in framework %}<li style="margin-bottom:9px">{{ f }}</li>{% endfor %}
+        </ol>
+      </div>
+
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Objectives</h3></div>
+        <ul class="small mb0">
+          {% for o in mission.objectives %}<li style="margin-bottom:9px">{{ o }}</li>{% endfor %}
+        </ul>
+      </div>
+
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Toolbox</h3></div>
+        <div class="pill-row">
+          {% for t in mission.tools %}<span class="badge mono">{{ t }}</span>{% endfor %}
+        </div>
+      </div>
+
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Scoring</h3></div>
+        <p class="small mb0">60% for the correct root cause, 40% for evidence breadth. Solutions and fixes are scored separately — a right diagnosis with a reckless fix is not a pass.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+  var MISSION = "{{ mission.id }}";
+  var solved = {{ 'true' if state.get('status') == 'solved' else 'false' }};
+
+  function bumpCount() {
+    var n = document.querySelectorAll(".ev-block .badge.ok").length;
+    var el = document.getElementById("evCount");
+    if (el) el.textContent = n;
+  }
+
+  document.querySelectorAll(".ev-collect").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var eid = btn.getAttribute("data-eid");
+      btn.disabled = true;
+      NetQuest.post("/api/mission/" + MISSION + "/evidence", { evidence_id: eid })
+        .then(function (data) {
+          if (data.blocked) {
+            NetQuest.toast(data.message);
+            btn.disabled = false;
+            return;
+          }
+          var block = document.querySelector('.ev-block[data-eid="' + eid + '"]');
+          block.querySelector(".ev-out").innerHTML =
+            '<div class="terminal" style="max-height:none">' + NetQuest.escape(data.evidence.output) +
+            '</div><div class="note mt8 mb0"><b>What it means:</b> ' +
+            NetQuest.escape(data.evidence.insight) + "</div>";
+          btn.outerHTML = '<span class="badge ok">collected</span>';
+          bumpCount();
+        })
+        .catch(function (e) { NetQuest.toast(e.message); btn.disabled = false; });
+    });
+  });
+
+  document.querySelectorAll(".hyp-test").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var idx = btn.getAttribute("data-idx");
+      NetQuest.post("/api/mission/" + MISSION + "/hypothesis", { index: +idx })
+        .then(function (data) {
+          var fb = document.querySelector(".hyp-fb-" + idx);
+          fb.innerHTML = '<div class="feedback ' + (data.verdict === "accepted" ? "ok" : "bad") +
+            '" style="margin-top:0"><div><b>' + data.verdict.toUpperCase() + "</b> — " +
+            NetQuest.escape(data.why) + "</div></div>";
+          btn.disabled = true;
+        })
+        .catch(function (e) { NetQuest.toast(e.message); });
+    });
+  });
+
+  document.getElementById("diagnoseBtn").addEventListener("click", function () {
+    var text = document.getElementById("diagnosisText").value;
+    if (text.trim().length < 10) { NetQuest.toast("Write at least a sentence"); return; }
+    NetQuest.post("/api/mission/" + MISSION + "/diagnose", {
+      diagnosis: text,
+      confidence: document.getElementById("confidence").value
+    }).then(function (data) {
+      if (data.blocked) { NetQuest.toast(data.message); return; }
+      var r = data.result;
+      var html = '<div class="feedback ' + (r.correct ? "ok" : "bad") + '">' +
+        "<h4>" + (r.correct ? "Root cause identified" : "Not the root cause") + "</h4><div>" +
+        NetQuest.escape(r.feedback) + "</div>";
+      if (!r.correct && r.contradictions && r.contradictions.length) {
+        html += '<div class="small mt8">Your diagnosis assumes: ' +
+          NetQuest.escape(r.contradictions.join(", ")) + " — the evidence contradicts that.</div>";
+      }
+      html += '<div class="small mt8">Evidence collected: ' + data.evidence_count +
+        " &middot; case score " + data.score + "</div></div>";
+      document.getElementById("diagResult").innerHTML = html;
+
+      if (r.correct && data.solution) {
+        var s = data.solution;
+        document.getElementById("solutionCard").classList.remove("hidden");
+        document.getElementById("solutionCard").innerHTML =
+          '<div class="card-title"><h3 class="mt0">The real story</h3></div>' +
+          "<h4>Root cause</h4><p>" + NetQuest.escape(s.root_cause) + "</p>" +
+          "<h4>Resolution</h4><p>" + NetQuest.escape(s.resolution) + "</p>" +
+          "<h4>How you would verify it</h4><p>" + NetQuest.escape(s.verification) + "</p>" +
+          "<h4>What to take away</h4><ul class=\"small\">" +
+          (s.lessons || []).map(function (l) { return "<li>" + NetQuest.escape(l) + "</li>"; }).join("") +
+          "</ul>";
+        if (data.resolution_options && data.resolution_options.length) {
+          document.getElementById("resolutionCard").classList.remove("hidden");
+          var opts = document.getElementById("resolutionOptions");
+          opts.innerHTML = data.resolution_options.map(function (o, i) {
+            return '<label class="checkitem"><input type="checkbox" name="res" value="' +
+              i + '"><span>' + NetQuest.escape(o.text) + "</span></label>";
+          }).join("");
+          window.__RES = data.resolution_options;
+        }
+        window.scrollTo({ top: document.getElementById("solutionCard").offsetTop - 80, behavior: "smooth" });
+      }
+    }).catch(function (e) { NetQuest.toast(e.message); });
+  });
+
+  document.getElementById("resolutionBtn").addEventListener("click", function () {
+    var chosen = [];
+    document.querySelectorAll('#resolutionOptions input[name="res"]').forEach(function (n) {
+      if (n.checked) chosen.push(window.__RES[+n.value].text);
+    });
+    if (!chosen.length) { NetQuest.toast("Select at least one action"); return; }
+    NetQuest.post("/api/mission/" + MISSION + "/resolution", { chosen: chosen })
+      .then(function (data) {
+        var html = '<div class="feedback ' + (data.percent >= 80 ? "ok" : "bad") + '"><h4>' +
+          data.percent + "% on the fix</h4><div>" +
+          (data.percent >= 80 ? "That is an operationally sound response."
+            : "The fix would not hold, or it treats the symptom rather than the cause.") +
+          "</div></div>";
+        if (data.rejected && data.rejected.length) {
+          html += '<div class="card tight mt8"><h4 class="mt0">Rejected choices</h4>' +
+            data.rejected.map(function (r) {
+              return '<div class="small" style="margin-bottom:6px"><b>' + NetQuest.escape(r.text) +
+                "</b> — " + NetQuest.escape(r.why) + "</div>";
+            }).join("") + "</div>";
+        }
+        if (data.notes && data.notes.length) {
+          html += '<div class="card tight mt8"><h4 class="mt0">Why the correct actions work</h4>' +
+            data.notes.map(function (r) {
+              return '<div class="small" style="margin-bottom:6px"><b>' + NetQuest.escape(r.text) +
+                "</b> — " + NetQuest.escape(r.why) + "</div>";
+            }).join("") + "</div>";
+        }
+        document.getElementById("resolutionResult").innerHTML = html;
+      })
+      .catch(function (e) { NetQuest.toast(e.message); });
+  });
+
+  if (solved) {
+    NetQuest.toast("Case already solved — you can re-run the evidence or try the fix again");
+  }
+})();
+</script>
+{% endblock %}

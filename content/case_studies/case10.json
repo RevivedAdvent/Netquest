@@ -1,0 +1,113 @@
+{
+  "id": "case10",
+  "order": 10,
+  "title": "Permission denied on a file you can read",
+  "module_id": "m6",
+  "difficulty": "advanced",
+  "tagline": "The service cannot read its own configuration. ls -l says the permissions are correct. Two different mechanisms say no.",
+  "environment": ["Fedora server with SELinux enforcing", "Service restored from a backup archive", "Config under /etc/myapp", "Service runs as svcapp"],
+  "topology": "systemd unit myapp (User=svcapp) --> /etc/myapp/app.conf (restored from tar)",
+  "symptoms": [
+    "Service fails at startup with 'cannot open /etc/myapp/app.conf: Permission denied'",
+    "ls -l shows root:svcapp with mode 640 — svcapp should be able to read it",
+    "The same config worked before a restore from backup",
+    "Running the binary by hand as root works"
+  ],
+  "objectives": [
+    "Separate classic Unix permissions from SELinux labelling and ACLs",
+    "Read ls -Z and identify a wrong context",
+    "Choose the correct relabel/restore command instead of disabling a security control"
+  ],
+  "tools": ["ls -l", "ls -Z", "namei -l", "getfacl", "restorecon", "semanage fcontext", "ausearch"],
+  "framework": [
+    "Who is the process, and which user/group does it run as?",
+    "What do the mode bits allow for that identity?",
+    "What do the extended controls (ACLs, SELinux labels) allow?"
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "label": "The exact error and identity",
+      "command": "systemctl status myapp --no-pager | tail -3; systemctl show -p User,Group myapp",
+      "output": "Nov 17 10:02:11 host myapp[4242]: FATAL: cannot open /etc/myapp/app.conf: Permission denied\nUser=svcapp\nGroup=svcapp",
+      "insight": "The process runs as svcapp. EACCES is returned by the kernel, not by the application's own logic.",
+      "requires": []
+    },
+    {
+      "id": "e2",
+      "label": "Classic permissions",
+      "command": "ls -l /etc/myapp/app.conf; namei -l /etc/myapp/app.conf",
+      "output": "-rw-r----- 1 root svcapp 512 Nov 17 09:58 /etc/myapp/app.conf\n\nf: /etc/myapp/app.conf\ndrwxr-xr-x root root /\ndrwxr-xr-x root root etc\ndrwxr-x--- root svcapp myapp\ndrwxr-xr-x root root /\n-rw-r----- root svcapp app.conf",
+      "insight": "owner root (rw), group svcapp (r), others none. svcapp is in the group, so mode bits allow a read, and every parent directory is traversable. Unix permissions are not the blocker.",
+      "requires": ["e1"]
+    },
+    {
+      "id": "e3",
+      "label": "Extended controls",
+      "command": "ls -Z /etc/myapp/app.conf; getfacl -p /etc/myapp/app.conf 2>/dev/null | head -6",
+      "output": "unconfined_u:object_r:user_home_t:s0 /etc/myapp/app.conf\n\n# file: etc/myapp/app.conf\n# owner: root\n# group: svcapp\nuser::rw-\ngroup::r--\nother::---",
+      "insight": "The SELinux type is user_home_t, not the type the service is allowed to read (etc_t). The tar restore preserved the archive's labels. No ACLs are involved.",
+      "requires": ["e2"]
+    },
+    {
+      "id": "e4",
+      "label": "Confirm SELinux is the denial",
+      "command": "sudo ausearch -m avc -ts recent | tail -4",
+      "output": "type=AVC msg=audit(1763380931.442:812): avc:  denied  { read } for  pid=4242 comm=\"java\" name=\"app.conf\" dev=\"dm-0\" ino=131 addr=?\n  scontext=system_u:system_r:myapp_t:s0 tcontext=unconfined_u:object_r:user_home_t:s0 tclass=file permissive=0",
+      "insight": "An explicit AVC denial: myapp_t tried to read a user_home_t file. That is the kernel refusing, and it names both contexts so there is nothing to infer.",
+      "requires": ["e3"]
+    },
+    {
+      "id": "e5",
+      "label": "What the label should be",
+      "command": "sudo semanage fcontext -l | grep '/etc/myapp' ; matchpathcon -V /etc/myapp/app.conf",
+      "output": "/etc/myapp(/.*)?   system_u:object_r:myapp_etc_t:s0\n\n/etc/myapp/app.conf has context unconfined_u:object_r:user_home_t:s0\nshould be system_u:object_r:myapp_etc_t:s0",
+      "insight": "The policy has a rule for this path. matchpathcon reports the mismatch directly: the file's label should be myapp_etc_t.",
+      "requires": ["e4"]
+    },
+    {
+      "id": "e6",
+      "label": "Why the restore caused it",
+      "command": "tar -tzvf /backup/etc-myapp.tgz | head -3",
+      "output": "-rw-r----- root/svcapp  512 2026-11-16 22:10 ./etc/myapp/app.conf\n(no SELinux xattrs preserved; archive created without --selinux)",
+      "insight": "The archive was created without --selinux, so extraction wrote files with default (home) labels. The permissions were preserved but the security context was not.",
+      "requires": ["e5"]
+    }
+  ],
+  "hypotheses": [
+    {"text": "The file's mode bits deny svcapp read access.", "verdict": "rejected", "why": "Mode 640 with group svcapp and svcapp as the process group allows a read; every parent directory is traversable."},
+    {"text": "SELinux denies the read because the restored file carries the wrong type.", "verdict": "accepted", "why": "An AVC denial names myapp_t reading user_home_t, and matchpathcon says the label should be myapp_etc_t."},
+    {"text": "An ACL is denying access.", "verdict": "rejected", "why": "getfacl shows only the base entries, no extended ACLs."},
+    {"text": "The service is running as the wrong user.", "verdict": "rejected", "why": "It runs as svcapp, which is the file's group owner."}
+  ],
+  "min_evidence": 4,
+  "diagnosis_accept": ["selinux", "context", "label", "avc", "user_home_t", "myapp_etc_t"],
+  "diagnosis_reject": ["chmod", "mode bits", "acl", "wrong user", "disk full", "the file is missing"],
+  "solution": {
+    "root_cause": "The backup archive was created and extracted without preserving SELinux extended attributes, so /etc/myapp/app.conf was written with the default user_home_t type instead of myapp_etc_t. Unix permissions are correct, but SELinux applies in addition to them, and the policy has no allowance for myapp_t reading user_home_t.",
+    "resolution": "Relabel the path to what policy expects: restorecon -Rv /etc/myapp (or semanage fcontext -a -t myapp_etc_t '/etc/myapp(/.*)?' followed by restorecon if a custom path was never labelled). For future restores, create archives with tar --selinux and extract as root so the labels are preserved.",
+    "verification": "ls -Z shows myapp_etc_t; matchpathcon -V reports no mismatch; the service starts and stays up; ausearch -m avc -ts recent shows no new denials for the unit. Confirm with systemctl restart and a log line proving the config was read.",
+    "lessons": [
+      "Permission denied can come from mode bits, ACLs or SELinux. Check them in that order, and read the AVC rather than guessing.",
+      "SELinux is a second lock, not a replacement for the first. Correct mode bits plus a wrong label still fails.",
+      "Backups that omit extended attributes are not faithful backups. Test restores, not just backups."
+    ],
+    "interview_followups": [
+      "What is the difference between a SELinux context and a Unix mode bit?",
+      "How do you make a custom application path get the right label permanently?",
+      "Why is setenforce 0 the wrong response, even as a test?"
+    ]
+  },
+  "resolution_options": [
+    {"text": "Run restorecon -Rv /etc/myapp", "correct": true, "why": "Applies the policy's expected label to the path and everything under it."},
+    {"text": "Add a permanent fcontext rule for the path, then relabel", "correct": true, "why": "Correct when the path is custom and has no existing policy rule."},
+    {"text": "chmod 644 /etc/myapp/app.conf", "correct": false, "why": "Changes nothing relevant: the blocker is the label, and it also weakens access for others."},
+    {"text": "Set SELinux to permissive permanently", "correct": false, "why": "Removes a security control to hide a labelling error."},
+    {"text": "Run the service as root", "correct": false, "why": "Does not fix the label and violates least privilege."}
+  ],
+  "interview_questions": [
+    {"q": "A process gets Permission denied but the mode bits look correct. What else can deny access?", "a": "An ACL, an SELinux denial, an immutable attribute, a read-only filesystem, or a parent directory issue. The AVC audit record and getfacl tell you which, and namei -l checks the whole path."},
+    {"q": "How does SELinux decide whether to allow an access?", "a": "It compares the source context (the process, e.g. myapp_t) with the target context (the file, e.g. myapp_etc_t) against the loaded policy. If no rule allows the access, it denies and logs an AVC."},
+    {"q": "What is the correct way to give a custom path a persistent label?", "a": "semanage fcontext -a -t <type> '<regex>', then restorecon -R on the path so existing files are relabelled to match the rule."}
+  ]
+}

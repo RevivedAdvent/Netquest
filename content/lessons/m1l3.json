@@ -1,0 +1,98 @@
+{
+  "id": "m1l3",
+  "module_id": "m1",
+  "title": "Public, private, static, dynamic — and what actually breaks",
+  "minutes": 12,
+  "summary": "The address types you will be asked about, what RFC 1918 is really for, and why 'static vs dynamic' is an operational choice rather than a technical one.",
+  "sections": [
+    {
+      "heading": "Private addressing exists because IPv4 ran out",
+      "html": "<p>RFC 1918 reserved three ranges that are never routed on the public internet:</p><table><tr><th>Range</th><th>Size</th><th>Typical use</th></tr><tr><td class='mono'>10.0.0.0/8</td><td>16.7M</td><td>Enterprise, cloud VPCs</td></tr><tr><td class='mono'>172.16.0.0/12</td><td>1M</td><td>Enterprises, container networks</td></tr><tr><td class='mono'>192.168.0.0/16</td><td>65k</td><td>Home and small offices</td></tr></table><p>They are reusable because every organisation can use the same numbers internally; NAT at the edge translates to a public address. The important interview point is the consequence: two hosts in different organisations can both be <code>10.0.0.5</code>, so private addresses are meaningless without context. That is why 'can you ping 10.0.0.5?' is not a complete question.</p><p>Other special ranges worth knowing:</p><ul><li><code>169.254.0.0/16</code> — link-local (APIPA on Windows). Seeing this on a Linux host usually means DHCP failed.</li><li><code>127.0.0.0/8</code> — loopback. <code>127.0.0.1</code> never leaves the host.</li><li><code>0.0.0.0/8</code> — 'this host / any address'. A default route is <code>0.0.0.0/0</code>.</li><li><code>224.0.0.0/4</code> — multicast; <code>255.255.255.255</code> — limited broadcast.</li></ul>"
+    },
+    {
+      "heading": "Static vs dynamic is a policy decision",
+      "html": "<p>Both give a host an address, mask, gateway and DNS. The difference is who decides and what happens when the network changes:</p><table><tr><th></th><th>Static</th><th>Dynamic (DHCP)</th></tr><tr><td>Change management</td><td>Manual per host, drift over time</td><td>Central scope, one place to change</td></tr><tr><td>Failure mode</td><td>Typo, duplicate address, stale gateway</td><td>Server unreachable, exhausted pool, wrong options</td></tr><tr><td>Good for</td><td>Routers, servers, printers, anything DNS points at</td><td>Clients, laptops, VMs, phones, anything that moves</td></tr></table><p>In practice you see both: a DHCP <em>reservation</em> gives a stable address while keeping central management. That detail often earns credit in an interview because it shows you have operated a real network rather than a textbook one.</p>"
+    },
+    {
+      "heading": "Duplicate addresses and conflicts",
+      "html": "<p>When two hosts claim the same IPv4 address, behaviour is ugly and non-deterministic: ARP replies race, the switch's MAC table flaps between two ports, connections die mid-transfer, and monitoring shows an address that 'sometimes' responds. Modern Linux uses Address Conflict Detection (ACD) for statically assigned addresses via <code>ip addr add ... </code> with <code>arping</code>-style probing, and <code>systemd-networkd</code> logs 'DuplicateAddressDetection' failures. DHCP servers commonly probe with ARP before offering a lease.</p><p>Practical detection: <code>arping -D -I eth0 10.0.0.5</code> asks 'does anyone else own this address?' without configuring it. On a switch you can look for the same MAC appearing on two ports, or the same IP in two ARP entries.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m1l3-1",
+      "type": "mcq",
+      "prompt": "A Linux laptop shows address 169.254.23.11/16 and no default route. What is the most likely cause?",
+      "options": [
+        "The DNS server is down",
+        "The NIC is faulty",
+        "DHCP did not complete, so the kernel self-assigned a link-local address",
+        "The subnet mask is wrong"
+      ],
+      "answer": 2,
+      "explanation": "169.254.0.0/16 is the IPv4 link-local range used when no DHCP lease is obtained. It implies L2 connectivity may exist but configuration did not arrive.",
+      "why_wrong": {
+        "1": "Link-local assignment requires a working interface, so the NIC is at least partly functional.",
+        "0": "DNS problems do not affect address assignment.",
+        "3": "The mask is consistent with the self-assigned address; there was no configured mask to get wrong."
+      },
+      "concepts": [
+        "APIPA",
+        "DHCP failure"
+      ]
+    },
+    {
+      "id": "q-m1l3-2",
+      "type": "self",
+      "prompt": "Why do infrastructure servers usually get static addresses or DHCP reservations rather than plain dynamic leases?",
+      "checklist": [
+        {
+          "text": "DNS records, firewall rules, monitoring and other systems reference the address or name; it must be stable.",
+          "weight": 2
+        },
+        {
+          "text": "A changing address breaks long-lived connections, ACLs and allow-lists.",
+          "weight": 1
+        },
+        {
+          "text": "Reservations keep central management and auditability while guaranteeing stability.",
+          "weight": 2
+        },
+        {
+          "text": "Dynamic leases are fine for clients where address churn is harmless.",
+          "weight": 1
+        }
+      ],
+      "reference": "<p>Servers are referenced by address and name from many places: DNS A/PTR records, firewall allow-lists, monitoring targets, backup jobs, TLS certificates in some cases, and client configuration. A lease change silently invalidates all of those. Static configuration or a DHCP reservation makes the address part of the contract. Reservations are usually preferred operationally because the scope stays the single source of truth and the server still receives options centrally.</p>",
+      "min_to_pass": 0.65,
+      "concepts": [
+        "static addressing",
+        "DNS dependencies"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "DHCP",
+      "text": "Link-local addressing is DHCP's fallback. The absence of a lease is itself diagnostic evidence."
+    },
+    {
+      "title": "DNS",
+      "text": "Static addressing is what makes DNS records meaningful for servers; reverse records in particular."
+    },
+    {
+      "title": "NAT",
+      "text": "Private addressing only works end to end because of translation at the edge — and that breaks inbound connections unless you configure it."
+    }
+  ],
+  "interview": [
+    {
+      "q": "What is the difference between a private and a public IP address?",
+      "a": "Private ranges (RFC 1918) are not routed on the internet and are reused by every organisation; they require NAT or a proxy at the edge to reach public destinations. Public addresses are globally unique and routable. The practical consequence is that private addresses only have meaning in the context of a specific network."
+    },
+    {
+      "q": "You see 169.254.x.x on a host. What do you check?",
+      "a": "That it is link-local, meaning no DHCP lease. Then: link status, DHCP server reachability (is the server on this L2 segment or is the relay configured), scope exhaustion, and whether the interface is in a network namespace or VLAN without DHCP."
+    }
+  ]
+}

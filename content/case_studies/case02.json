@@ -1,0 +1,113 @@
+{
+  "id": "case02",
+  "order": 2,
+  "title": "One name works everywhere except the lab",
+  "module_id": "m3",
+  "difficulty": "core",
+  "tagline": "app.corp.example resolves everywhere on the office network but returns NXDOMAIN in the lab subnet.",
+  "environment": ["Fedora workstation in the lab subnet", "Office network with the same laptop model working", "Internal resolver 10.10.0.53", "Application team who insist the record exists"],
+  "topology": "lab workstation (10.10.7.0/24) --> lab gateway --> internal resolver 10.10.0.53 --> authoritative ns1.corp.example",
+  "symptoms": [
+    "In the office, app.corp.example resolves to 10.10.5.30",
+    "In the lab subnet, the same laptop gets NXDOMAIN",
+    "The application team confirms the record exists and is unchanged",
+    "dig @10.10.0.53 app.corp.example returns NXDOMAIN from one subnet and an answer from another"
+  ],
+  "objectives": [
+    "Establish which resolver the failing client is actually using",
+    "Distinguish NXDOMAIN (name absent in this view) from SERVFAIL (lookup attempted and failed)",
+    "Recognise the split-horizon or search-domain explanation rather than blaming the application"
+  ],
+  "tools": ["getent hosts", "dig", "resolvectl status", "cat /etc/resolv.conf", "cat /etc/nsswitch.conf"],
+  "framework": [
+    "What is the client asking, exactly? (FQDN or relative name)",
+    "Which resolver does the client use, and does the answer differ by resolver?",
+    "Is the name absent, empty, or failing? (NXDOMAIN vs NODATA vs SERVFAIL)"
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "label": "Reproduce with the system resolver",
+      "command": "getent hosts app.corp.example; echo exit=$?",
+      "output": "exit=2",
+      "insight": "getent uses NSS, the same path as real applications. Exit 2 means the name was not found — this is the true reproduction, not a dig artefact.",
+      "requires": []
+    },
+    {
+      "id": "e2",
+      "label": "Which resolver is configured",
+      "command": "resolvectl status | head -20",
+      "output": "Link 2 (eth0)\n    Current DNS Server: 10.10.7.1\n           DNS Servers: 10.10.7.1\n            DNS Domain: lab.corp.example",
+      "insight": "The lab link-specific DNS server is 10.10.7.1, not the internal resolver 10.10.0.53. systemd-resolved prefers the link-specific server for names in its routing domain.",
+      "requires": ["e1"]
+    },
+    {
+      "id": "e3",
+      "label": "Query the good resolver directly",
+      "command": "dig +short @10.10.0.53 app.corp.example",
+      "output": "10.10.5.30",
+      "insight": "The authoritative view is healthy. The record exists and the internal resolver answers it. The problem is which server the client asks.",
+      "requires": ["e2"]
+    },
+    {
+      "id": "e4",
+      "label": "Query the resolver the client actually uses",
+      "command": "dig @10.10.7.1 app.corp.example",
+      "output": ";; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 41231\n;; AUTHORITY SECTION:\ncorp.example. 1800 IN SOA ns1.corp.example. hostmaster.corp.example. 2026111701 7200 3600 1209600 1800",
+      "insight": "The lab resolver answers NXDOMAIN with an SOA. It has a different view of corp.example — split-horizon DNS. The SOA also tells you the negative answer is cached for 1800s.",
+      "requires": ["e3"]
+    },
+    {
+      "id": "e5",
+      "label": "Check the client's search domain effect",
+      "command": "dig +search +short app",
+      "output": "(empty)",
+      "insight": "With the link search domain lab.corp.example, the bare name app is expanded to app.lab.corp.example, which does not exist. Any documentation or script that uses the short name is fragile for the same reason.",
+      "requires": ["e4"]
+    },
+    {
+      "id": "e6",
+      "label": "Confirm NSS order",
+      "command": "grep '^hosts' /etc/nsswitch.conf",
+      "output": "hosts:      files mdns4_minimal [NOTFOUND=return] resolve [!UNAVAIL=return] dns",
+      "insight": "Hosts, then mdns, then resolved, then DNS. A hosts entry would have masked this, and nothing in the chain is misconfigured — the answer is simply wrong at the resolver the client uses.",
+      "requires": ["e5"]
+    }
+  ],
+  "hypotheses": [
+    {"text": "The DNS record is missing or was deleted.", "verdict": "rejected", "why": "The internal resolver returns the correct address, so the record exists."},
+    {"text": "The client uses a resolver with a different view of corp.example (split horizon).", "verdict": "accepted", "why": "The lab link points at 10.10.7.1, which answers NXDOMAIN for a name that 10.10.0.53 answers correctly."},
+    {"text": "The DNS server is unreachable from the lab.", "verdict": "rejected", "why": "The client receives a clean NXDOMAIN with an SOA, which proves the server answered."},
+    {"text": "The application is misconfigured.", "verdict": "rejected", "why": "getent, a system tool, reproduces the failure, and the same name works from another subnet."}
+  ],
+  "min_evidence": 3,
+  "diagnosis_accept": ["different view", "split horizon", "split-horizon", "wrong resolver", "link-specific dns", "10.10.7.1"],
+  "diagnosis_reject": ["record was deleted", "dns server is down", "application bug", "ttl", "the client is offline"],
+  "solution": {
+    "root_cause": "The lab subnet's DHCP hands out 10.10.7.1 as the DNS server, and systemd-resolved prefers that link-specific resolver. 10.10.7.1 serves a different view of corp.example (split-horizon DNS), so app.corp.example does not exist there. The record and the internal resolver are both healthy; the client is asking the wrong authority for the name.",
+    "resolution": "Point the lab's DNS at the internal resolver that serves the corp.example view (10.10.0.53), either by changing the DHCP option 6 for the lab scope or by configuring the link's DNS. If the lab must keep its own resolver, add the corp.example zone to it.",
+    "verification": "resolvectl status shows 10.10.0.53 for the link; getent hosts app.corp.example returns 10.10.5.30 without a restart; dig shows NOERROR with an answer from the internal authority. Test the FQDN explicitly, not the short name.",
+    "lessons": [
+      "NXDOMAIN is an authoritative statement: 'this name does not exist in the view of the server you asked'. It does not mean the name does not exist.",
+      "There can be more than one resolver in effect. resolvectl status exposes per-link servers and routing domains, which /etc/resolv.conf hides.",
+      "Short names depend on search domains. Always test and document the FQDN."
+    ],
+    "interview_followups": [
+      "What is the difference between NXDOMAIN and SERVFAIL?",
+      "How does systemd-resolved decide which server to ask when multiple links have DNS configured?",
+      "How would you design internal and external views of the same zone deliberately?"
+    ]
+  },
+  "resolution_options": [
+    {"text": "Change the lab scope's DNS server to the resolver that holds the internal view", "correct": true, "why": "Directly corrects which authority the client asks."},
+    {"text": "Add the corp.example zone to the lab resolver", "correct": true, "why": "Also valid if the lab resolver must remain in place; the view is then complete."},
+    {"text": "Add the record to /etc/hosts on each lab machine", "correct": false, "why": "Works for one host and hides the actual defect; the next machine has the same problem."},
+    {"text": "Ask the application team to change the hostname", "correct": false, "why": "The name and record are fine; the client is asking the wrong server."},
+    {"text": "Flush the DNS cache", "correct": false, "why": "The negative answer is real, not stale. Flushing only removes evidence."}
+  ],
+  "interview_questions": [
+    {"q": "A name resolves in one subnet but not another. How do you structure the investigation?", "a": "First confirm with getent that it is a real NSS-level failure. Then establish which resolver each client uses (resolvectl status per link), and query those resolvers directly with dig. If they answer differently, it is a view/delegation problem, not a client problem."},
+    {"q": "Explain split-horizon DNS and when it is legitimate.", "a": "The same zone name is served with different content depending on who asks — typically internal addresses inside, public addresses outside. It is legitimate for security boundaries, but it needs documentation because it makes 'the record exists' an incomplete statement."},
+    {"q": "What does the SOA in an NXDOMAIN response tell you?", "a": "Which zone answered, and the negative-cache TTL via the SOA minimum. That is how long the absence will be cached, which matters right after you create a record."}
+  ]
+}

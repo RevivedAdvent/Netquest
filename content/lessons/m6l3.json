@@ -1,0 +1,95 @@
+{
+  "id": "m6l3",
+  "module_id": "m6",
+  "title": "sudo, find, grep and safe practice",
+  "minutes": 16,
+  "summary": "Using privilege and search tools without causing incidents — including the exact commands to investigate rather than guess.",
+  "sections": [
+    {
+      "heading": "sudo is not 'be root'",
+      "html": "<p><code>sudo</code> runs a command as another user according to <code>/etc/sudoers</code> (edited with <code>visudo</code>, never directly). Points that matter operationally:</p><ul><li><strong>Least privilege is expressible</strong>: grant a specific command, not <code>ALL</code>.</li><li><strong>sudo does not fix ownership problems</strong>. Running an editor as root on a config file can leave it root-owned and unreadable by the service — a self-inflicted version of the bug you were fixing.</li><li><strong>Redirection happens in your shell</strong>, before sudo runs: <code>sudo echo x &gt; /etc/file</code> fails with permission denied because the shell opened the file, not sudo. Use <code>sudo tee</code> or <code>sudo sh -c '...'</code>.</li><li><strong>sudo caching</strong> means a second command may not prompt; scripts should not rely on interaction.</li></ul><pre><span class='c'># safely append a line to a root-owned file</span>echo 'Setting=1' | sudo tee -a /etc/app/app.conf\n<span class='c'># sudo the whole pipeline when needed</span>sudo sh -c 'grep -c error /var/log/app.log &gt; /tmp/count'</pre>"
+    },
+    {
+      "heading": "find: the investigation tool",
+      "html": "<pre><span class='c'># biggest files under /var, one filesystem</span>sudo find /var -xdev -type f -size +200M -printf '%s\\t%p\\n' | sort -rn | head\n<span class='c'># recently modified config (change analysis)</span>sudo find /etc -type f -mmin -60 -ls\n<span class='c'># files that are world-writable (a real security check)</span>sudo find / -xdev -type f -perm -0002 -print 2>/dev/null\n<span class='c'># setuid binaries outside package-managed paths</span>sudo find / -xdev -perm -4000 -type f 2>/dev/null\n<span class='c'># delete files older than 30 days in a scratch directory only</span>find /home/me/netquest-practice -type f -mtime +30 -delete</pre><p>Two safety habits: always bound <code>find</code> to a specific path and use <code>-xdev</code> to avoid traversing into network or virtual filesystems, and never combine <code>-delete</code> with an unbounded path. Preview the matches by running the same command without <code>-delete</code> first.</p>"
+    },
+    {
+      "heading": "grep and locate",
+      "html": "<pre><span class='c'># which config file sets this directive?</span>sudo grep -rn --include='*.conf' 'Listen' /etc\n<span class='c'># case-insensitive, with line numbers, skipping binaries</span>grep -rniI 'max_clients' /etc/app\n<span class='c'># fixed string (no regex metachars) with context</span>grep -nF -A2 -B2 'Connection refused' /var/log/messages\n<span class='c'># files by name, database-backed (fast, possibly stale)</span>locate -i 'app.conf' | head\n<span class='c'># rebuild the database if locate is empty</span>sudo updatedb</pre><p>Keep in mind the division of labour: <code>find</code> searches by metadata (name, size, time, permissions), <code>grep</code> searches content, <code>locate</code> is a fast but stale index. In an incident, <code>find</code> with <code>-mmin</code> is often the fastest way to discover what changed.</p>"
+    },
+    {
+      "heading": "Safe practice rules for this application's exercises",
+      "html": "<p>Every exercise in NetQuest uses a directory you create, never system paths:</p><pre>mkdir -p ~/netquest-practice && cd ~/netquest-practice</pre><ul><li>Never run <code>chmod -R</code> or <code>chown -R</code> on <code>/</code>, <code>/etc</code>, <code>/usr</code> or <code>/var</code>.</li><li>Never delete anything you did not create.</li><li>Practice with <code>chmod</code> on files in the practice directory and read the effect with <code>ls -l</code>.</li><li>Do not change firewall rules, routing or DNS configuration to 'test' something against the live system; simulate in the lab instead, or use a container.</li></ul>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m6l3-1",
+      "type": "mcq",
+      "prompt": "Why does `sudo echo test > /etc/app.conf` fail with 'Permission denied'?",
+      "options": [
+        "sudo requires a password",
+        "sudo cannot write to /etc",
+        "The shell performs the redirection as your user before sudo runs",
+        "The file is immutable"
+      ],
+      "answer": 2,
+      "explanation": "Redirection is set up by the calling shell, which lacks write permission. Use `echo test | sudo tee /etc/app.conf`.",
+      "why_wrong": {
+        "1": "sudo can write to /etc.",
+        "3": "Immutable would produce 'Operation not permitted'.",
+        "0": "A password prompt is not a permission error."
+      },
+      "concepts": [
+        "sudo",
+        "shell redirection"
+      ]
+    },
+    {
+      "id": "q-m6l3-2",
+      "type": "mcq",
+      "prompt": "Which command best shows what changed in /etc during the last hour?",
+      "options": [
+        "find /etc -type f -mmin -60 -ls",
+        "grep -r 'changed' /etc",
+        "locate /etc",
+        "du -sh /etc"
+      ],
+      "answer": 0,
+      "explanation": "-mmin -60 filters by modification time within the last 60 minutes — ideal change analysis after an incident.",
+      "why_wrong": {
+        "1": "That searches for the literal word 'changed'.",
+        "2": "locate searches names in a stale index.",
+        "3": "du reports sizes."
+      },
+      "concepts": [
+        "find",
+        "change analysis"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Incidents",
+      "text": "'What changed?' is answered by find -mmin, package logs and audit trails, not by intuition."
+    },
+    {
+      "title": "Safety",
+      "text": "These habits are why NetQuest never asks you to modify system configuration as an exercise."
+    },
+    {
+      "title": "Case study 10",
+      "text": "Uses exactly these commands on files inside the practice directory."
+    }
+  ],
+  "interview": [
+    {
+      "q": "How would you find the config file responsible for a setting?",
+      "a": "grep -rn --include over /etc to find the directive, then check the service unit for EnvironmentFile or command-line overrides, since the last value wins. Distro defaults under /usr/lib are read-only references."
+    },
+    {
+      "q": "Why is chmod 777 a bad fix?",
+      "a": "It grants write access to everyone, which is an integrity and security problem, and it hides the real cause (wrong owner, missing group membership or missing traversal bit). It also makes future permission problems impossible to diagnose."
+    }
+  ]
+}

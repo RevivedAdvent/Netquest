@@ -1,0 +1,98 @@
+{
+  "id": "m4l4",
+  "module_id": "m4",
+  "title": "Packet capture with tcpdump, and ARP/neighbour inspection",
+  "minutes": 20,
+  "summary": "Capture is the ground truth when arguments about 'whose fault it is' go nowhere. This lesson covers safe, narrow captures and how to read neighbour tables.",
+  "sections": [
+    {
+      "heading": "Safe capturing rules",
+      "html": "<p>Packet capture sees every packet on the interface, which means private network details, hostnames, session tokens and sometimes credentials in cleartext protocols. Follow these rules:</p><ul><li><strong>Always bound the capture</strong>: <code>-c N</code> for a packet count, <code>-w file</code> to a file rather than a flooding terminal, and a narrow <code>-i</code> interface.</li><li><strong>Always filter</strong>: <code>host</code>, <code>port</code>, <code>net</code>. Never capture an unfiltered stream on a busy link.</li><li><strong>Redact before sharing</strong>: strip MACs, IPs and payloads before pasting into a ticket. Mention that you did.</li><li><strong>Permissions</strong>: <code>tcpdump</code> needs root or <code>CAP_NET_RAW</code>; put the user in a group or use a capability rather than running your whole investigation as root.</li></ul>"
+    },
+    {
+      "heading": "The filters you will actually use",
+      "html": "<pre><span class='c'># DHCP conversation, bounded</span>sudo tcpdump -i eth0 -n -c 40 'port 67 or port 68'\n<span class='c'># DNS queries to and from one host</span>sudo tcpdump -i eth0 -n -c 20 'udp port 53 and host 10.0.0.53'\n<span class='c'># TCP handshake to a service</span>sudo tcpdump -i eth0 -n -c 20 'tcp port 443 and host 203.0.113.20'\n<span class='c'># ARP only (is the gateway answering?)</span>sudo tcpdump -i eth0 -n -e -c 20 arp\n<span class='c'># full packets, no payload truncation, to a file</span>sudo tcpdump -i eth0 -n -w /tmp/nq.pcap 'host 10.0.0.5 and tcp port 22'</pre><p>Flag reference: <code>-n</code> no name resolution (faster, avoids extra DNS), <code>-nn</code> no port names either, <code>-e</code> show link-layer headers, <code>-A</code> ASCII payload, <code>-X</code> hex+ASCII, <code>-s 0</code> full packet, <code>-w</code> write pcap.</p>"
+    },
+    {
+      "heading": "Reading a capture",
+      "html": "<pre><span class='c'>$ sudo tcpdump -i eth0 -n -c 6 'tcp port 443 and host 203.0.113.20'</span>12:04:11.104231 IP 10.20.30.44.51234 > 203.0.113.20.443: Flags [S], seq 1, win 64240, options [mss 1460]\n12:04:11.112004 IP 203.0.113.20.443 > 10.20.30.44.51234: Flags [S.], seq 2, ack 2, win 65160\n12:04:11.112233 IP 10.20.30.44.51234 > 203.0.113.20.443: Flags [.], ack 2\n12:04:11.140881 IP 10.20.30.44.51234 > 203.0.113.20.443: Flags [P.], seq 2:518, ack 2  <span class='c'># TLS ClientHello</span>\n12:04:11.160002 IP 203.0.113.20.443 > 10.20.30.44.51234: Flags [P.], seq 2:1430, ack 518\n12:04:11.161120 IP 10.20.30.44.51234 > 203.0.113.20.443: Flags [.], ack 1430</pre><p>What the flags tell you:</p><table><tr><th>Pattern</th><th>Meaning</th></tr><tr><td>S then S. then .</td><td>Successful three-way handshake</td></tr><tr><td>S repeated with no reply</td><td>Packets leaving, nothing returning — DROP, routing or dead host</td></tr><tr><td>S then R</td><td>Refused: port closed or REJECT rule</td></tr><tr><td>S then ICMP unreachable</td><td>No route, or an administrative block</td></tr><tr><td>R mid-session</td><td>Something killed the connection (firewall state, app crash, RST injection)</td></tr><tr><td>Retransmissions of the same seq</td><td>Loss on one direction of the path</td></tr></table><p>This table is the single most useful diagnostic artefact in this module: it turns 'the network is broken' into a specific, localised finding.</p>"
+    },
+    {
+      "heading": "ARP and the neighbour table",
+      "html": "<p>IPv4 ARP (and IPv6 NDP) resolve an on-link address to a link-layer address. The results live in the neighbour table:</p><pre><span class='c'>$ ip neigh show</span>10.20.30.1 dev eth0 lladdr 52:54:00:aa:bb:01 REACHABLE\n10.20.30.99 dev eth0 lladdr 52:54:00:cc:dd:02 STALE\n10.20.31.7 dev eth0  FAILED</pre><table><tr><th>State</th><th>Meaning</th></tr><tr><td>REACHABLE</td><td>Recently confirmed; usable</td></tr><tr><td>STALE</td><td>Known but unverified; a packet triggers revalidation</td></tr><tr><td>DELAY / PROBE</td><td>Unicast revalidation in progress</td></tr><tr><td>INCOMPLETE</td><td>Request sent, no reply yet</td></tr><tr><td>FAILED</td><td>Did not resolve; traffic to it is dropped</td></tr><tr><td>PERMANENT</td><td>Statically configured, never expires</td></tr></table><p>A <code>FAILED</code> or <code>INCOMPLETE</code> entry for the default gateway is one of the most useful findings in networking: it proves the L2 problem is local and that nothing beyond the host matters yet. Clearing entries to force re-resolution: <code>sudo ip neigh flush dev eth0</code> (careful on production systems — it briefly interrupts traffic).</p>"
+    },
+    {
+      "heading": "Gratuitous ARP and why it matters",
+      "html": "<p>A host may send an ARP announcement (gratuitous ARP) when an interface comes up or an address moves — for example a floating IP on an HA pair. Switches and hosts update their tables from it, which is what makes failover fast. It is also how ARP spoofing works, which is why dynamic ARP inspection exists on managed switches.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m4l4-1",
+      "type": "mcq",
+      "prompt": "A capture shows repeated SYN packets from the client to 203.0.113.20:443 with no responses. What does this prove?",
+      "options": [
+        "The SYN leaves the client but no response returns — the cause is downstream (filter, route, or host)",
+        "DNS is broken",
+        "The client's NIC is failing",
+        "The server's application is down"
+      ],
+      "answer": 0,
+      "explanation": "You can only conclude that packets leave and nothing comes back. That localises the fault to the path or the server, but does not yet say which.",
+      "why_wrong": {
+        "3": "A down application usually yields RST (refused), not silence.",
+        "1": "The capture shows the client already has the IP address.",
+        "2": "A failing NIC would not produce a clean SYN sequence."
+      },
+      "concepts": [
+        "tcpdump interpretation"
+      ]
+    },
+    {
+      "id": "q-m4l4-2",
+      "type": "mcq",
+      "prompt": "`ip neigh` shows the default gateway in state FAILED. What is the most useful next step?",
+      "options": [
+        "Run dig against an external resolver",
+        "Restart the server",
+        "Check DNS configuration",
+        "Check link state and ARP reachability on the local segment — the failure is local"
+      ],
+      "answer": 3,
+      "explanation": "A FAILED neighbour entry means no ARP reply from the gateway. The problem is on the local link: cable, VLAN, port, or the gateway itself.",
+      "why_wrong": {
+        "2": "DNS needs the gateway resolved first.",
+        "1": "Nothing suggests a server issue.",
+        "0": "External DNS is unreachable without a working gateway."
+      },
+      "concepts": [
+        "ARP",
+        "neighbour states"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Switching",
+      "text": "ARP broadcasts are what the switch floods; the neighbour table is the result of that flooding."
+    },
+    {
+      "title": "TCP states",
+      "text": "The capture's flag sequence maps directly onto ss states: SYN-SENT, ESTAB, FIN-WAIT."
+    },
+    {
+      "title": "Case studies 4 and 12",
+      "text": "Both hinge on distinguishing a silent drop from an active refusal."
+    }
+  ],
+  "interview": [
+    {
+      "q": "How would you prove whether packets are leaving the host at all?",
+      "a": "Capture on the host's interface with a narrow filter. If SYNs appear but no responses return, the host is transmitting and the problem is downstream. If nothing appears, the problem is local: application, routing, or a wrong destination address."
+    },
+    {
+      "q": "What is a neighbour table and what does FAILED mean?",
+      "a": "The ARP/NDP cache mapping IP addresses to MAC addresses on the local segment. FAILED means resolution was attempted and no reply arrived, so the kernel drops traffic to that address — a definite local Layer 2 problem."
+    }
+  ]
+}

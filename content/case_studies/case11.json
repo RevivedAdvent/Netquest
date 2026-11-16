@@ -1,0 +1,113 @@
+{
+  "id": "case11",
+  "order": 11,
+  "title": "The record changed an hour ago and half the company is still on the old one",
+  "module_id": "m3",
+  "difficulty": "core",
+  "tagline": "A cutover moved app.corp.example to a new address. Some clients moved instantly, others still hit the old server. Nobody is wrong.",
+  "environment": ["Internal authoritative DNS (BIND) for corp.example", "Two internal resolvers with caches", "Clients on Fedora and Windows", "Old and new application servers both still running"],
+  "topology": "clients --> resolver A (10.10.0.53) / resolver B (10.10.7.1) --> authoritative ns1.corp.example",
+  "symptoms": [
+    "About half of users reach the new server; the rest still reach the old one",
+    "dig @ns1.corp.example app.corp.example returns the new address",
+    "dig @10.10.0.53 app.corp.example returns the new address",
+    "dig @10.10.7.1 app.corp.example still returns the old address"
+  ],
+  "objectives": [
+    "Explain TTL-based caching as the real mechanism behind 'propagation'",
+    "Prove which cache is serving the stale answer and for how long",
+    "Design a cutover that avoids this class of incident"
+  ],
+  "tools": ["dig", "dig +trace", "dig +noall +answer", "rndc dumpdb", "resolvectl query"],
+  "framework": [
+    "Is the authoritative data correct?",
+    "Which resolver is the client using, and what does that resolver return?",
+    "How long will the stale answer persist, and can it be shortened?"
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "label": "Authoritative truth",
+      "command": "dig +short @ns1.corp.example app.corp.example A",
+      "output": "10.10.5.31",
+      "insight": "The zone is correct. The new address is published, so the change itself succeeded.",
+      "requires": []
+    },
+    {
+      "id": "e2",
+      "label": "Resolver A",
+      "command": "dig +noall +answer @10.10.0.53 app.corp.example A",
+      "output": "app.corp.example.  42  IN  A  10.10.5.31",
+      "insight": "Resolver A has the new record with 42 seconds of TTL left, so it refreshed recently. Clients using A are fine.",
+      "requires": ["e1"]
+    },
+    {
+      "id": "e3",
+      "label": "Resolver B",
+      "command": "dig +noall +answer @10.10.7.1 app.corp.example A",
+      "output": "app.corp.example.  2711  IN  A  10.10.5.30",
+      "insight": "Resolver B still holds the old address with 2711 seconds remaining. It cached the record before the change and will keep serving it for another 45 minutes.",
+      "requires": ["e2"]
+    },
+    {
+      "id": "e4",
+      "label": "What TTL the record had",
+      "command": "dig +noall +answer @ns1.corp.example app.corp.example A; dig @ns1.corp.example app.corp.example SOA +short",
+      "output": "app.corp.example.  3600  IN  A  10.10.5.31\nns1.corp.example. hostmaster.corp.example. 2026111701 7200 3600 1209600 1800",
+      "insight": "The record's TTL is 3600 seconds. Any resolver that cached it just before the change can serve the old value for up to an hour. That is the entire explanation.",
+      "requires": ["e3"]
+    },
+    {
+      "id": "e5",
+      "label": "Which clients are affected",
+      "command": "resolvectl query app.corp.example; resolvectl status | grep -A2 'Current DNS'",
+      "output": "app.corp.example: 10.10.5.30\n         (app.corp.example: 10.10.5.30)\n\n  Current DNS Server: 10.10.7.1",
+      "insight": "The affected client uses resolver B, which matches the stale answer. The pattern is per-resolver, not per-user or per-application.",
+      "requires": ["e4"]
+    },
+    {
+      "id": "e6",
+      "label": "Can the stale entry be dropped?",
+      "command": "sudo rndc flushname app.corp.example; dig +noall +answer @10.10.7.1 app.corp.example A",
+      "output": "(flush accepted)\napp.corp.example.  60  IN  A  10.10.5.31",
+      "insight": "Flushing the specific name on the stale resolver fixes it immediately, and the fresh answer arrives with the full TTL. This is a targeted fix, not a global cache wipe.",
+      "requires": ["e5"]
+    }
+  ],
+  "hypotheses": [
+    {"text": "The zone change was not applied everywhere.", "verdict": "rejected", "why": "The authoritative server returns the new address, and one resolver already has it."},
+    {"text": "Resolver B is serving a cached answer that has not expired yet.", "verdict": "accepted", "why": "Resolver B returns the old address with 2711s of TTL remaining, and the record's TTL is 3600s."},
+    {"text": "The old server is still running and answering, so clients reach it directly.", "verdict": "rejected", "why": "Clients resolve the name to the old address; the old server is not intercepting anything."},
+    {"text": "The clients have a hosts file entry.", "verdict": "rejected", "why": "resolvectl shows the answer came from resolver B, not from files."}
+  ],
+  "min_evidence": 3,
+  "diagnosis_accept": ["ttl", "cache", "cached", "propagation", "stale"],
+  "diagnosis_reject": ["zone was not updated", "the old server is still running", "hosts file", "dns is broken", "the client is offline"],
+  "solution": {
+    "root_cause": "The A record's TTL was 3600 seconds. Resolver B cached the old address shortly before the cutover, so it continues to answer with the old value until that TTL expires. Nothing is misconfigured: this is normal, correct caching behaviour, and 'propagation' is just the name people give to the resulting window of inconsistency.",
+    "resolution": "Immediate: flush the specific name on the affected resolvers (rndc flushname, or the equivalent on each platform) so they re-query. Structural: before a planned cutover, lower the TTL to 60-300 seconds at least one old-TTL period in advance, perform the change, then raise the TTL again afterwards. Keep the old server serving during the window so late clients still work.",
+    "verification": "Every resolver returns the new address with a fresh TTL; resolvectl query on a previously affected client returns the new address; the old server's request rate drops to zero; and no client is still resolving to the old address in the access logs.",
+    "lessons": [
+      "DNS changes are not pushed. Caches expire on their own schedule, bounded by the TTL that was in force when they cached.",
+      "Lower the TTL before the change, not during it. Changing the TTL at cutover time does not affect entries already cached.",
+      "Negative caching has the same property: a newly created name can stay invisible for the SOA minimum."
+    ],
+    "interview_followups": [
+      "Why does lowering the TTL at the moment of the change not help?",
+      "How would you run a zero-downtime cutover between two addresses?",
+      "What is the difference between the record TTL and the negative-cache TTL?"
+    ]
+  },
+  "resolution_options": [
+    {"text": "Flush the specific name on the resolvers holding the stale answer", "correct": true, "why": "Forces an immediate re-query and resolves the incident now."},
+    {"text": "Lower the TTL well before the next cutover", "correct": true, "why": "Prevents recurrence by shrinking the inconsistency window in advance."},
+    {"text": "Flush all caches on every resolver in the company", "correct": false, "why": "Disproportionate: it spikes load on the authoritative servers and is unnecessary when one name is affected."},
+    {"text": "Change the record again to force an update", "correct": false, "why": "Cached entries are keyed by name and type; changing the value does not invalidate them."},
+    {"text": "Tell users to wait an hour", "correct": false, "why": "Accurate but avoidable, and it leaves the old server serving stale data with no monitoring."}
+  ],
+  "interview_questions": [
+    {"q": "What does 'DNS propagation' actually mean?", "a": "It is not propagation. Each resolver caches an answer for its TTL, so after a change different resolvers hold different values until their individual TTLs expire. The window is bounded by the TTL that was in force when each cache entry was created."},
+    {"q": "How do you plan a DNS cutover with minimal disruption?", "a": "Lower the TTL to something short at least one old-TTL period before the change, keep both old and new endpoints serving during the transition, make the change, verify from multiple resolvers, then restore the normal TTL once the old endpoint's traffic reaches zero."},
+    {"q": "A user says a name resolves to the wrong address. How do you prove it is a cache?", "a": "Query the authoritative server directly, then each resolver the client might use. If the authority is correct and one resolver is stale with a remaining TTL, the cache is proven, and the remaining TTL tells you exactly how long it will last."}
+  ]
+}

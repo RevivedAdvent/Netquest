@@ -1,0 +1,20 @@
+{
+  "switch": {"name": "SW1", "ports": 8, "vlans": [10, 20]},
+  "hosts": [
+    {"id": "pca", "name": "PC-A", "mac": "AA:AA:AA:00:00:01", "port": 1, "vlan": 10, "ip": "10.0.10.11/24"},
+    {"id": "pcb", "name": "PC-B", "mac": "AA:AA:AA:00:00:02", "port": 2, "vlan": 10, "ip": "10.0.10.12/24"},
+    {"id": "pcc", "name": "PC-C", "mac": "AA:AA:AA:00:00:03", "port": 3, "vlan": 10, "ip": "10.0.10.13/24"},
+    {"id": "pcd", "name": "PC-D", "mac": "AA:AA:AA:00:00:04", "port": 4, "vlan": 20, "ip": "10.0.20.11/24"},
+    {"id": "pce", "name": "PC-E", "mac": "AA:AA:AA:00:00:05", "port": 5, "vlan": 20, "ip": "10.0.20.12/24"},
+    {"id": "gw", "name": "Router", "mac": "AA:AA:AA:00:00:FE", "port": 8, "vlan": 10, "ip": "10.0.10.1/24"}
+  ],
+  "frames": [
+    {"id": "f1", "src": "pca", "dst": "pcb", "kind": "unicast", "label": "PC-A -> PC-B (first frame, both unknown)"},
+    {"id": "f2", "src": "pcb", "dst": "pca", "kind": "unicast", "label": "PC-B replies to PC-A"},
+    {"id": "f3", "src": "pca", "dst": "broadcast", "kind": "broadcast", "label": "PC-A broadcasts (ARP for the gateway)"},
+    {"id": "f4", "src": "gw", "dst": "pca", "kind": "unicast", "label": "Router replies to PC-A (its MAC is now learned)"},
+    {"id": "f5", "src": "pca", "dst": "pcd", "kind": "unicast", "label": "PC-A -> PC-D (different VLAN: never crosses)"},
+    {"id": "f6", "src": "pcd", "dst": "pce", "kind": "unicast", "label": "PC-D -> PC-E (inside VLAN 20)"},
+    {"id": "f7", "src": "pcc", "dst": "pcc", "kind": "unicast", "label": "PC-C -> itself (same ingress port: filtered)"}
+  ]
+}

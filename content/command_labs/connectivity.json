@@ -1,0 +1,561 @@
+{
+  "labs": [
+    {
+      "id": "ping",
+      "command": "ping",
+      "group": "Connectivity testing",
+      "module_id": "m4",
+      "tagline": "Is there a path, and how good is it?",
+      "problem": "Quickly test IP reachability, round-trip latency and loss to one host.",
+      "how": "Sends ICMP echo requests and measures replies. On Linux it runs continuously until interrupted, so always bound it with -c.",
+      "syntax": "ping [options] DESTINATION",
+      "flags": [
+        {
+          "flag": "-c N",
+          "why": "Send N packets and stop. Essential for scripts."
+        },
+        {
+          "flag": "-W SEC",
+          "why": "Per-packet timeout; keeps a broken path from hanging."
+        },
+        {
+          "flag": "-s SIZE",
+          "why": "Payload size. With -M do it becomes an MTU test."
+        },
+        {
+          "flag": "-M do",
+          "why": "Set Don't Fragment, so oversized packets fail instead of fragmenting."
+        },
+        {
+          "flag": "-I IFACE",
+          "why": "Source interface or address."
+        },
+        {
+          "flag": "-6",
+          "why": "IPv6 (ICMPv6 echo)."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "ping -c 4 192.168.1.1",
+          "note": "Local gateway, quick health check."
+        },
+        {
+          "cmd": "ping -c 4 -W 2 example.com",
+          "note": "Latency plus an implicit DNS test."
+        },
+        {
+          "cmd": "ping -s 1472 -M do -c 2 host",
+          "note": "PMTU test at 1500-byte frame size."
+        }
+      ],
+      "sample": "$ ping -c 4 192.168.1.1\nPING 192.168.1.1 (192.168.1.1) 56(84) bytes of data.\n64 bytes from 192.168.1.1: icmp_seq=1 ttl=64 time=0.318 ms\n64 bytes from 192.168.1.1: icmp_seq=2 ttl=64 time=0.402 ms\n64 bytes from 192.168.1.1: icmp_seq=3 ttl=64 time=0.351 ms\n64 bytes from 192.168.1.1: icmp_seq=4 ttl=64 time=0.377 ms\n\n--- 192.168.1.1 ping statistics ---\n4 packets transmitted, 4 received, 0% packet loss, time 3062ms\nrtt min/avg/max/mdev = 0.318/0.362/0.402/0.031 ms",
+      "read": [
+        "ttl=64 means no router decremented it: the destination is on the local segment (or one hop away with the same initial TTL).",
+        "mdev is jitter. Small mdev is a healthy path; large mdev with low average means queuing.",
+        "0% packet loss is ICMP-specific evidence, not proof that TCP works.",
+        "The first line confirms the name resolved, which tells you DNS worked."
+      ],
+      "mistakes": [
+        "Concluding a host is down because ping fails — ICMP is often filtered.",
+        "Leaving ping unbounded in a script (no -c), so it never exits.",
+        "Using ping to prove a service is up. It proves reachability only."
+      ],
+      "when": "After confirming interface, address and route. Never as the first and only test.",
+      "followups": [
+        "nc -vz host PORT",
+        "curl -v",
+        "traceroute host",
+        "mtr host"
+      ],
+      "try": {
+        "scenario": "Measure latency and loss to your default gateway, and then to a public address, to see whether the problem (if any) is local.",
+        "task": "Ping the gateway and a public address with bounded counts and short timeouts.",
+        "command": "GW=$(ip route | awk '/^default/{print $3; exit}'); ping -c 4 -W 2 \"$GW\"; echo ---; ping -c 4 -W 2 1.1.1.1",
+        "expected_patterns": [
+          {
+            "pattern": "packets transmitted",
+            "label": "the ping statistics line"
+          },
+          {
+            "pattern": "\\d+(\\.\\d+)?% packet loss",
+            "label": "a packet loss percentage"
+          },
+          {
+            "pattern": "rtt min/avg/max/mdev",
+            "label": "the latency summary"
+          }
+        ],
+        "verdict_ok": "You have loss and latency for both the first hop and a remote target — enough to say whether the fault is local.",
+        "verdict_missing": "Paste both statistics blocks, including the rtt summary."
+      },
+      "simulate": {
+        "intro": "Interpret these two results together.",
+        "terminal": "$ ping -c 4 10.0.0.1\n4 packets transmitted, 4 received, 0% packet loss\nrtt min/avg/max/mdev = 0.402/0.511/0.688/0.121 ms\n\n$ ping -c 4 1.1.1.1\n4 packets transmitted, 0 received, 100% packet loss, time 3062ms",
+        "questions": [
+          {
+            "id": "lab-ping-s1",
+            "prompt": "What is the most defensible conclusion?",
+            "options": [
+              "DNS is broken",
+              "The gateway is down",
+              "The NIC is faulty",
+              "Local connectivity is fine; the problem is beyond the gateway (or ICMP to 1.1.1.1 is filtered)"
+            ],
+            "answer": 3,
+            "explanation": "The gateway replies with sub-millisecond latency, so the local segment works. Everything beyond it fails or is filtered.",
+            "why_wrong": {
+              "1": "It answered four times.",
+              "0": "Names were not used.",
+              "2": "Local replies prove the NIC works."
+            }
+          },
+          {
+            "id": "lab-ping-s2",
+            "prompt": "Which test would separate 'filtered ICMP' from 'no internet connectivity'?",
+            "options": [
+              "ping the gateway again",
+              "curl to a known host on port 443, or nc -vz 1.1.1.1 443",
+              "ip addr",
+              "dig with no arguments"
+            ],
+            "answer": 1,
+            "explanation": "A TCP test to a real service uses different filtering and proves whether any path exists.",
+            "why_wrong": {
+              "0": "Already proven healthy.",
+              "2": "Addressing is not in question.",
+              "3": "DNS itself needs connectivity."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "A user says the internal wiki is unreachable. ping to the wiki's IP fails, but `curl -I http://wiki:8080` returns HTTP 200.",
+        "question": "What is the correct interpretation?",
+        "options": [
+          "DNS returned the wrong address",
+          "The host is up and the service works; only ICMP is filtered",
+          "The firewall is allowing ping and blocking HTTP",
+          "The wiki is down and curl used a cache"
+        ],
+        "answer": 1,
+        "explanation": "A successful TCP connection proves reachability and a listener. ICMP silence is therefore a filtering policy, not an outage.",
+        "why_wrong": {
+          "3": "curl performs a real connection.",
+          "0": "The address was correct, since the connection succeeded.",
+          "2": "The opposite is observed."
+        }
+      }
+    },
+    {
+      "id": "traceroute",
+      "command": "traceroute",
+      "group": "Connectivity testing",
+      "module_id": "m4",
+      "tagline": "Which routers does the path cross, and where does it stop?",
+      "problem": "Localise a failure or a latency jump to a hop rather than a host.",
+      "how": "Sends probes with increasing TTL values; each router that drops the packet at TTL 0 returns ICMP time-exceeded, revealing itself. Probe type matters: UDP by default, ICMP with -I, TCP with -T.",
+      "syntax": "traceroute [options] DESTINATION",
+      "flags": [
+        {
+          "flag": "-n",
+          "why": "Numeric output; no reverse DNS, so it is fast and works when DNS is broken."
+        },
+        {
+          "flag": "-I",
+          "why": "ICMP echo probes — often filtered."
+        },
+        {
+          "flag": "-T -p 443",
+          "why": "TCP SYN probes to a real port; best across firewalls."
+        },
+        {
+          "flag": "-m N",
+          "why": "Maximum hops."
+        },
+        {
+          "flag": "-q N",
+          "why": "Probes per hop (default 3)."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "traceroute -n 1.1.1.1",
+          "note": "Fast numeric path."
+        },
+        {
+          "cmd": "traceroute -T -p 443 -n host",
+          "note": "Path that looks like HTTPS traffic."
+        },
+        {
+          "cmd": "traceroute -m 5 -q 1 -n host",
+          "note": "Bounded, cheap probe."
+        }
+      ],
+      "sample": "$ traceroute -n 203.0.113.20\ntraceroute to 203.0.113.20, 30 hops max, 60 byte packets\n 1  192.0.2.1      0.412 ms  0.398 ms  0.377 ms\n 2  198.51.100.9   1.204 ms  1.180 ms  1.233 ms\n 3  * * *\n 4  203.0.113.1    8.910 ms  9.003 ms  8.877 ms\n 5  203.0.113.20  12.102 ms 12.008 ms 12.341 ms",
+      "read": [
+        "Stars mean no ICMP reply for those probes, usually because that router rate-limits or does not generate time-exceeded. It is not proof of a fault.",
+        "A latency jump between consecutive hops shows where distance or congestion begins.",
+        "Latency that decreases later in the path implies asymmetric routing or per-flow load balancing.",
+        "Reaching the destination with reasonable latency while the application still fails means the problem is above the network layer."
+      ],
+      "mistakes": [
+        "Declaring a hop broken because it shows stars.",
+        "Using default UDP probes against a firewall that blocks them, then concluding the network is broken.",
+        "Trusting reverse DNS names (they can be meaningless or stale) — use -n."
+      ],
+      "when": "When you know the destination is not responding and you want to see whether the path dies early.",
+      "followups": [
+        "mtr -rwc 20 host",
+        "tracepath -n host",
+        "ping -c 1 <each hop>"
+      ],
+      "try": {
+        "scenario": "Trace the path to a public address and note where latency changes.",
+        "task": "Run a numeric, bounded trace and record the hop with the biggest latency jump.",
+        "command": "traceroute -n -m 12 -q 2 1.1.1.1",
+        "expected_patterns": [
+          {
+            "pattern": "(?m)^\\s*1\\s+",
+            "label": "the first hop line"
+          },
+          {
+            "pattern": "\\d+\\.\\d+ ms",
+            "label": "latency values per hop"
+          },
+          {
+            "pattern": "(?m)^\\s*\\d+\\s+\\*|\\d+\\s+\\S+\\s+\\d",
+            "label": "multiple hops listed"
+          }
+        ],
+        "verdict_ok": "You have a hop-by-hop path with latency, which is what you need to localise a delay.",
+        "verdict_missing": "Paste the full trace output (several hop lines)."
+      },
+      "simulate": {
+        "intro": "The application to 203.0.113.20 is unreachable, and this trace was taken.",
+        "terminal": "$ traceroute -T -p 443 -n 203.0.113.20\ntraceroute to 203.0.113.20, 30 hops max, 60 byte packets\n 1  192.0.2.1      0.402 ms  0.381 ms  0.377 ms\n 2  198.51.100.9   1.180 ms  1.203 ms  1.190 ms\n 3  198.51.100.10  1.402 ms  1.388 ms  1.410 ms\n 4  * * *\n 5  * * *\n ...\n30  * * *",
+        "questions": [
+          {
+            "id": "lab-trace-s1",
+            "prompt": "What has been established?",
+            "options": [
+              "The client's gateway is down",
+              "DNS resolution is the problem",
+              "Hop 4 is definitively broken",
+              "Traffic reaches the network at hop 3 and then stops being answered; the break is at or beyond hop 3"
+            ],
+            "answer": 3,
+            "explanation": "The last answering hop is 3, so the path is healthy up to there and something beyond stops returning probes (or stops forwarding).",
+            "why_wrong": {
+              "2": "Stars cannot distinguish 'broken' from 'filtered'.",
+              "0": "Hop 1 answered instantly.",
+              "1": "The destination was already an IP address."
+            }
+          },
+          {
+            "id": "lab-trace-s2",
+            "prompt": "Which is the single most useful next command?",
+            "options": [
+              "mtr -rwc 30 203.0.113.20 to see loss and jitter per hop over time",
+              "dig 203.0.113.20",
+              "Restart the client's networking",
+              "ping the local gateway"
+            ],
+            "answer": 0,
+            "explanation": "MTR gives statistics, which distinguish real loss from probe filtering and reveal intermittent behaviour.",
+            "why_wrong": {
+              "3": "Already proven healthy at hop 1.",
+              "2": "No evidence for that.",
+              "1": "That is not a name."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "A trace shows 15% loss at hop 4 and 0% at every later hop including the destination.",
+        "question": "What do you conclude?",
+        "options": [
+          "Hop 4 is dropping 15% of production traffic",
+          "The destination is unreachable",
+          "Hop 4 rate-limits ICMP replies; real traffic is unaffected",
+          "The client has a duplex mismatch"
+        ],
+        "answer": 2,
+        "explanation": "Loss that appears at one hop and disappears downstream is the signature of ICMP policing on that router.",
+        "why_wrong": {
+          "0": "Real loss would persist to the destination.",
+          "1": "The destination answered.",
+          "3": "A duplex mismatch would show loss at hop 1."
+        }
+      }
+    },
+    {
+      "id": "tracepath",
+      "command": "tracepath",
+      "group": "Connectivity testing",
+      "module_id": "m4",
+      "tagline": "Path plus path MTU, without root.",
+      "problem": "Discover the path and the maximum unfragmented packet size when you cannot or do not want to use raw sockets.",
+      "how": "Like traceroute but uses UDP and discovers path MTU incrementally from iputils. Works as an ordinary user.",
+      "syntax": "tracepath [-n] [-m MAXHOPS] DESTINATION",
+      "flags": [
+        {
+          "flag": "-n",
+          "why": "No name resolution."
+        },
+        {
+          "flag": "-m N",
+          "why": "Maximum hops."
+        },
+        {
+          "flag": "-4 / -6",
+          "why": "Address family."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "tracepath -n 1.1.1.1",
+          "note": "Path with PMTU discovery."
+        },
+        {
+          "cmd": "tracepath -n -m 10 vpn.example.com",
+          "note": "Check whether a tunnel reduced the MTU."
+        }
+      ],
+      "sample": "$ tracepath -n 1.1.1.1\n 1?: [LOCALHOST]                      pmtu 1500\n 1:  192.0.2.1                0.410ms\n 2:  198.51.100.9             1.208ms\n 3:  198.51.100.10            1.402ms\n 4:  203.0.113.1              8.914ms\n 5:  1.1.1.1                 12.004ms reached\n     Resume: pmtu 1500 hops 5 back 5",
+      "read": [
+        "The 'pmtu' value is the largest packet the path currently supports — this is the key number.",
+        "A pmtu below 1500 (e.g. 1400 on a VPN) explains why large transfers or TLS handshakes fail while pings work.",
+        "'hops N back M' compares forward and return counts; different values hint at asymmetric routing.",
+        "'reached' marks the destination."
+      ],
+      "mistakes": [
+        "Expecting it to reveal every hop: some routers do not reply.",
+        "Using it to measure throughput; it measures path and MTU, not bandwidth.",
+        "Assuming 1500 everywhere: tunnels, PPPoE and some VPNs reduce it."
+      ],
+      "when": "When large transfers hang or TLS times out but small requests work.",
+      "followups": [
+        "ping -s 1472 -M do host",
+        "ip link (check local mtu)",
+        "mtr host"
+      ],
+      "try": {
+        "scenario": "Confirm the path MTU to a public address is 1500, so you can rule out an MTU problem.",
+        "task": "Run tracepath and locate the pmtu line.",
+        "command": "tracepath -n -m 8 1.1.1.1",
+        "expected_patterns": [
+          {
+            "pattern": "pmtu\\s+\\d+",
+            "label": "the pmtu value"
+          },
+          {
+            "pattern": "(?m)^\\s*1:",
+            "label": "hop lines"
+          },
+          {
+            "pattern": "reached|Resume",
+            "label": "the completion line"
+          }
+        ],
+        "verdict_ok": "You have the path MTU and the hop-by-hop view.",
+        "verdict_missing": "Include the final 'Resume: pmtu ...' line — that is the diagnostic part."
+      },
+      "simulate": {
+        "intro": "Large HTTPS uploads fail while small requests succeed. The trace reports this.",
+        "terminal": "$ tracepath -n 203.0.113.20\n 1?: [LOCALHOST]                      pmtu 1500\n 1:  192.0.2.1                0.402ms\n 2:  198.51.100.9             1.200ms pmtu 1400\n 3:  203.0.113.1              8.910ms\n 4:  203.0.113.20             9.800ms reached\n     Resume: pmtu 1400 hops 4 back 4",
+        "questions": [
+          {
+            "id": "lab-tracepath-s1",
+            "prompt": "Why do small requests work but large uploads fail?",
+            "options": [
+              "The client's interface is down",
+              "The destination is down",
+              "The path MTU is 1400, so 1500-byte packets are dropped somewhere on the path",
+              "DNS is returning a wrong address"
+            ],
+            "answer": 2,
+            "explanation": "PMTU drops to 1400 at hop 2, so DF-set 1500-byte packets cannot traverse. Small packets still fit.",
+            "why_wrong": {
+              "1": "It was reached.",
+              "3": "The destination was specified by IP.",
+              "0": "Hop 1 answered."
+            }
+          },
+          {
+            "id": "lab-tracepath-s2",
+            "prompt": "What is the appropriate mitigation?",
+            "options": [
+              "Fix MTU/MSS: lower the interface MTU or clamp MSS on the tunnel, and confirm ICMP frag-needed is not blocked",
+              "Change the DNS server",
+              "Reinstall the client networking stack",
+              "Add a static route"
+            ],
+            "answer": 0,
+            "explanation": "Either the tunnel MTU must be respected or MSS clamping used, plus PMTU discovery must be allowed to work.",
+            "why_wrong": {
+              "2": "Not a software fault.",
+              "1": "Unrelated.",
+              "3": "Routing already works."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "Over a VPN, SSH works, small HTTP requests work, but large POSTs hang. tracepath reports pmtu 1400.",
+        "question": "Which explanation fits best?",
+        "options": [
+          "The VPN is down",
+          "The server is out of disk space",
+          "SSH uses a different route",
+          "Path MTU is reduced by the tunnel and PMTU discovery is failing, so big packets vanish"
+        ],
+        "answer": 3,
+        "explanation": "Classic MTU black hole: DF-set packets above 1400 are dropped and the ICMP frag-needed message is filtered.",
+        "why_wrong": {
+          "0": "SSH over the VPN works.",
+          "2": "Small requests to the same host work.",
+          "1": "That would not depend on packet size."
+        }
+      }
+    },
+    {
+      "id": "mtr",
+      "command": "mtr",
+      "group": "Connectivity testing",
+      "module_id": "m4",
+      "tagline": "Traceroute with statistics — the right tool for intermittent problems.",
+      "problem": "Identify where loss and jitter occur across a path over time, not just once.",
+      "how": "Continuously probes every hop and reports loss and latency statistics per hop.",
+      "syntax": "mtr [--report] [--report-wide] -c COUNT DESTINATION",
+      "flags": [
+        {
+          "flag": "-r / --report",
+          "why": "Non-interactive, pasteable output."
+        },
+        {
+          "flag": "-w",
+          "why": "Wide output so hostnames and addresses are not truncated."
+        },
+        {
+          "flag": "-c N",
+          "why": "Number of probe cycles."
+        },
+        {
+          "flag": "-n",
+          "why": "No DNS; faster and independent of resolution."
+        },
+        {
+          "flag": "-T -P 443",
+          "why": "TCP probes when ICMP is filtered."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "mtr -rwc 50 1.1.1.1",
+          "note": "Standard report for an intermittent issue."
+        },
+        {
+          "cmd": "mtr -T -P 443 -rwc 30 host",
+          "note": "TCP-based measurement to an application port."
+        }
+      ],
+      "sample": "$ mtr -rwc 20 203.0.113.20\nHOST                 Loss%   Snt   Last   Avg  Best  Wrst StDev\n  1. 192.0.2.1         0.0%    20    0.4   0.4   0.3   0.9   0.1\n  2. 198.51.100.9      0.0%    20    1.2   1.3   1.1   4.2   0.4\n  3. 198.51.100.10    15.0%    20    1.4   1.4   1.3   1.6   0.1\n  4. 203.0.113.1       0.0%    20    9.1  46.2   8.9 310.4  61.2\n  5. 203.0.113.20      0.0%    20   92.0 101.7   9.2 410.7 104.9",
+      "read": [
+        "Loss at hop 3 with 0% at later hops = ICMP rate limiting on hop 3, not a fault.",
+        "High StDev at hops 4-5 with all packets delivered = jitter/congestion, which users feel as slowness.",
+        "Loss that continues from a hop to the end = a real problem at or after it.",
+        "Loss at hop 1 = local problem (cable, wireless, driver, saturated uplink)."
+      ],
+      "mistakes": [
+        "Reading intermediate loss as a fault.",
+        "Running too few cycles: 5 packets cannot distinguish 5% loss from 0%.",
+        "Comparing MTR values taken at different times of day as if they were comparable."
+      ],
+      "when": "Whenever a user reports 'slow' or 'intermittent' rather than 'down'.",
+      "followups": [
+        "ss -ti (retransmits)",
+        "ip -s link (errors)",
+        "TCP test to the service"
+      ],
+      "try": {
+        "scenario": "Collect evidence about an intermittent slowdown without root and without generating heavy traffic.",
+        "task": "Run a bounded report to a public target and note the hop with the highest StDev.",
+        "command": "mtr -rwc 20 -n 1.1.1.1",
+        "expected_patterns": [
+          {
+            "pattern": "(?i)loss%",
+            "label": "the MTR table header"
+          },
+          {
+            "pattern": "\\d+\\.\\d+%",
+            "label": "per-hop loss percentages"
+          },
+          {
+            "pattern": "(?m)^\\s*\\d+\\.\\s+\\S+",
+            "label": "hop rows with host addresses"
+          }
+        ],
+        "verdict_ok": "You have per-hop loss and jitter to reason from.",
+        "verdict_missing": "Paste the whole report table including the header row."
+      },
+      "simulate": {
+        "intro": "A user reports slow SSH. Read the report.",
+        "terminal": "$ mtr -rwc 30 -n 203.0.113.20\nHOST                 Loss%   Snt   Last   Avg  Best  Wrst StDev\n  1. 10.0.0.1          0.0%    30    0.3   0.3   0.3   0.5   0.0\n  2. 198.51.100.9     0.0%    30    1.2   1.4   1.1   5.0   0.6\n  3. 203.0.113.1     18.0%    30    9.0  52.1   8.9 402.0  88.4\n  4. 203.0.113.20    18.0%    30   96.0 108.3   9.1 415.0 110.2",
+        "questions": [
+          {
+            "id": "lab-mtr-s1",
+            "prompt": "Where does the problem start?",
+            "options": [
+              "Nowhere; MTR output is always noisy",
+              "Hop 3, and it persists to the destination — likely a real congestion point",
+              "Hop 2, which is the ISP edge",
+              "Hop 1, the local network"
+            ],
+            "answer": 1,
+            "explanation": "Loss appears at hop 3 and continues to the end, with very large StDev. That pattern indicates real congestion or loss on that segment.",
+            "why_wrong": {
+              "3": "Hop 1 is perfect.",
+              "2": "Hop 2 shows 0% loss and low StDev.",
+              "0": "Patterns are interpretable; this one persists downstream."
+            }
+          },
+          {
+            "id": "lab-mtr-s2",
+            "prompt": "Which additional check is most relevant for an SSH slowdown?",
+            "options": [
+              "Re-create the user's SSH key",
+              "Check retransmission counters on the client's connection (ss -ti) and the interface error counters",
+              "Reboot the destination",
+              "Change the DNS resolver"
+            ],
+            "answer": 1,
+            "explanation": "Loss and jitter cause TCP retransmissions; ss -ti shows retrans/rtt per connection, and interface errors would show a local physical problem.",
+            "why_wrong": {
+              "3": "DNS is resolved once at connect time.",
+              "2": "Destructive without evidence.",
+              "0": "Authentication is not the issue."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "MTR to a file server shows 0% loss but StDev of 120 ms, and users complain of slow transfers.",
+        "question": "What does this indicate?",
+        "options": [
+          "The path is perfect and the server is at fault",
+          "DNS is slow",
+          "A routing loop",
+          "No packet loss, but heavy jitter — consistent with congestion or bufferbloat, which TCP experiences as variable throughput"
+        ],
+        "answer": 3,
+        "explanation": "Jitter without loss degrades TCP throughput; it points at queuing rather than failure.",
+        "why_wrong": {
+          "0": "Jitter is evidence against 'perfect'.",
+          "1": "DNS affects connection setup only.",
+          "2": "A loop would exhaust TTL and break connectivity entirely."
+        }
+      }
+    }
+  ]
+}

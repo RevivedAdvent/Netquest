@@ -1,0 +1,121 @@
+{
+  "id": "m6",
+  "number": 6,
+  "title": "Linux File Management and Permissions",
+  "tagline": "Why the service cannot read its own config file.",
+  "priority": "secondary",
+  "weight": 1.0,
+  "estimated_minutes": 90,
+  "summary": "A secondary module, but 'Permission denied' is one of the most common real incidents. This module covers the filesystem hierarchy, ownership, modes, umask, and the traversal permission that people forget.",
+  "objectives": [
+    "Navigate the filesystem hierarchy and explain what lives where.",
+    "Read a mode string and convert between symbolic and octal permissions.",
+    "Explain why directory permissions behave differently from file permissions.",
+    "Diagnose 'permission denied' on a file that exists and looks readable.",
+    "Predict the effect of umask on new files and directories.",
+    "Use find, grep, locate, tar and ln deliberately."
+  ],
+  "key_questions": [
+    "A service cannot read its config file. How do you find out why?",
+    "Why does a directory need execute permission?",
+    "What is the difference between chmod and chown?",
+    "What does umask 027 produce for a new file?",
+    "Why does sudo not fix everything?"
+  ],
+  "lesson_ids": [
+    "m6l1",
+    "m6l2",
+    "m6l3"
+  ],
+  "lab_ids": [
+    "find",
+    "grep",
+    "tar",
+    "ln"
+  ],
+  "mission_ids": [
+    "case10"
+  ],
+  "assessment": [
+    {
+      "id": "q-m6a-1",
+      "type": "mcq",
+      "prompt": "A file is -rw-r-----. root app. A process running as user app cannot read it. Why?",
+      "options": [
+        "There is no read permission for anyone",
+        "SELinux always blocks this",
+        "The file mode is wrong for the owner",
+        "The process must also be in a group with read permission, and app2 owns nothing here"
+      ],
+      "answer": 3,
+      "explanation": "Owner root has rw, group app has r, others have nothing. A user not in group app and not root falls into 'others' and gets no read access.",
+      "why_wrong": {
+        "0": "Owner and group both have read.",
+        "2": "The owner has read; the question is who the process runs as.",
+        "1": "SELinux is a separate layer; the classical DAC check already denies it."
+      },
+      "concepts": [
+        "permission evaluation"
+      ]
+    },
+    {
+      "id": "q-m6a-2",
+      "type": "mcq",
+      "prompt": "What does `chmod 750 dir` allow?",
+      "options": [
+        "Owner r-x, group rwx, others nothing",
+        "Owner rwx, group r-x, others nothing",
+        "Owner rwx, group rwx, others r-x",
+        "Anyone can list and enter the directory"
+      ],
+      "answer": 1,
+      "explanation": "750 = owner 7 (rwx), group 5 (r-x), others 0 (---). On a directory, x means 'can traverse'.",
+      "why_wrong": {
+        "3": "Others have no permissions at all.",
+        "2": "Group would need 7 for rwx, and others would show 5.",
+        "0": "Owner 7 is rwx, not r-x."
+      },
+      "concepts": [
+        "octal permissions",
+        "directory traversal"
+      ]
+    },
+    {
+      "id": "q-m6a-3",
+      "type": "self",
+      "prompt": "A service fails with 'Permission denied' opening /etc/myapp/config.yml, which exists and is mode 640 owned by root:myapp. The service runs as user svcapp in group myapp. Explain how you would diagnose it.",
+      "checklist": [
+        {
+          "text": "Verify which user the process actually runs as (systemctl show -p User,Group).",
+          "weight": 2
+        },
+        {
+          "text": "Confirm group membership: the process's supplementary groups matter, not the shell's.",
+          "weight": 1
+        },
+        {
+          "text": "Check permissions on every directory in the path, not just the file — traversal needs x.",
+          "weight": 2
+        },
+        {
+          "text": "Check for SELinux context problems (ls -Z, audit2why) as a second layer.",
+          "weight": 1
+        },
+        {
+          "text": "Check for immutable/ACL attributes (lsattr, getfacl) that can override the mode.",
+          "weight": 1
+        },
+        {
+          "text": "Propose a least-privilege fix rather than chmod 777.",
+          "weight": 2
+        }
+      ],
+      "reference": "<p>Start with the process identity: <code>systemctl show -p User,Group myapp.service</code> and, for a running process, <code>ps -o user,group,cmd -p PID</code>. Then confirm the file's owner/group/mode and whether the process's effective groups include myapp — a group added to the user but not to the unit file (or vice versa) is a classic gap. Then walk the path: every parent directory needs <code>x</code> for that user, which is the most commonly missed requirement. Then check <code>getfacl</code> and <code>lsattr</code> for ACLs and immutable flags, and <code>ls -Z</code> plus <code>ausearch</code>/<code>audit2why</code> for SELinux denials on Fedora. Fix with least privilege: add the process user to the group, or set owner/group with <code>chown root:myapp</code> and mode 640. Never chmod 666 or 777.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "permission diagnosis",
+        "SELinux"
+      ]
+    }
+  ]
+}

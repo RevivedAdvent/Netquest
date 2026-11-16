@@ -1,0 +1,259 @@
+{
+  "client": {
+    "name": "fedora-laptop",
+    "ip": "10.10.0.44"
+  },
+  "resolvers": [
+    {
+      "id": "internal",
+      "name": "Internal resolver",
+      "ip": "10.10.0.53"
+    },
+    {
+      "id": "public",
+      "name": "Public resolver",
+      "ip": "1.1.1.1"
+    }
+  ],
+  "hosts_file": [
+    {
+      "name": "localhost",
+      "ip": "127.0.0.1"
+    },
+    {
+      "name": "wiki.corp.example",
+      "ip": "10.10.5.20"
+    }
+  ],
+  "hierarchy": [
+    {
+      "level": "root",
+      "server": "a.root-servers.net (198.41.0.4)",
+      "zone": "."
+    },
+    {
+      "level": "tld",
+      "server": "a.gtld-servers.net (192.5.6.30)",
+      "zone": "com."
+    },
+    {
+      "level": "tld",
+      "server": "a.gtld-servers.net (192.5.6.30)",
+      "zone": "example."
+    },
+    {
+      "level": "authoritative",
+      "server": "ns1.example.com (203.0.113.53)",
+      "zone": "example.com."
+    },
+    {
+      "level": "authoritative",
+      "server": "ns1.corp.example (10.10.0.53)",
+      "zone": "corp.example."
+    }
+  ],
+  "zones": {
+    "example.com.": {
+      "authoritative": "ns1.example.com (203.0.113.53)",
+      "records": [
+        {
+          "name": "example.com",
+          "type": "A",
+          "value": "203.0.113.20",
+          "ttl": 3600
+        },
+        {
+          "name": "www.example.com",
+          "type": "A",
+          "value": "203.0.113.21",
+          "ttl": 300
+        },
+        {
+          "name": "www.example.com",
+          "type": "AAAA",
+          "value": "2001:db8::21",
+          "ttl": 300
+        },
+        {
+          "name": "example.com",
+          "type": "MX",
+          "value": "10 mail.example.com",
+          "ttl": 3600
+        },
+        {
+          "name": "example.com",
+          "type": "TXT",
+          "value": "\"v=spf1 -all\"",
+          "ttl": 3600
+        },
+        {
+          "name": "blog.example.com",
+          "type": "CNAME",
+          "value": "www.example.com",
+          "ttl": 600
+        },
+        {
+          "name": "mail.example.com",
+          "type": "A",
+          "value": "203.0.113.25",
+          "ttl": 3600
+        },
+        {
+          "name": "example.com",
+          "type": "SOA",
+          "value": "ns1.example.com hostmaster.example.com (2026111701 7200 3600 1209600 300)",
+          "ttl": 300
+        }
+      ]
+    },
+    "corp.example.": {
+      "authoritative": "ns1.corp.example (10.10.0.53)",
+      "records": [
+        {
+          "name": "wiki.corp.example",
+          "type": "A",
+          "value": "10.10.5.20",
+          "ttl": 300
+        },
+        {
+          "name": "app.corp.example",
+          "type": "A",
+          "value": "10.10.5.30",
+          "ttl": 60
+        },
+        {
+          "name": "app.corp.example",
+          "type": "CNAME",
+          "value": "app-v2.corp.example",
+          "ttl": 60
+        },
+        {
+          "name": "app-v2.corp.example",
+          "type": "A",
+          "value": "10.10.5.31",
+          "ttl": 60
+        },
+        {
+          "name": "db.corp.example",
+          "type": "A",
+          "value": "10.10.5.40",
+          "ttl": 300
+        },
+        {
+          "name": "corp.example",
+          "type": "SOA",
+          "value": "ns1.corp.example hostmaster.corp.example (2026111701 7200 3600 1209600 1800)",
+          "ttl": 1800
+        }
+      ]
+    }
+  },
+  "queries": [
+    {
+      "name": "www.example.com",
+      "type": "A",
+      "note": "Public name, uncached."
+    },
+    {
+      "name": "blog.example.com",
+      "type": "A",
+      "note": "CNAME chain to www.example.com."
+    },
+    {
+      "name": "wiki.corp.example",
+      "type": "A",
+      "note": "Internal name, present in the hosts file."
+    },
+    {
+      "name": "app.corp.example",
+      "type": "A",
+      "note": "Internal CNAME chain."
+    },
+    {
+      "name": "missing.corp.example",
+      "type": "A",
+      "note": "Does not exist in the zone."
+    },
+    {
+      "name": "www.example.com",
+      "type": "MX",
+      "note": "Name exists, type does not (NODATA)."
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "normal",
+      "label": "Normal resolution",
+      "resolver": "internal",
+      "cache": "empty",
+      "fault": null
+    },
+    {
+      "id": "cache_hit",
+      "label": "Warm cache",
+      "resolver": "internal",
+      "cache": "warm",
+      "fault": null,
+      "query": {
+        "name": "www.example.com",
+        "type": "A"
+      }
+    },
+    {
+      "id": "wrong_resolver",
+      "label": "Incorrect DNS server",
+      "resolver": "public",
+      "cache": "empty",
+      "fault": null,
+      "query": {
+        "name": "app.corp.example",
+        "type": "A"
+      },
+      "note": "An internal name asked of a public resolver: split-horizon DNS means the public view does not contain it."
+    },
+    {
+      "id": "servfail",
+      "label": "SERVFAIL from upstream",
+      "resolver": "internal",
+      "cache": "empty",
+      "fault": "servfail"
+    },
+    {
+      "id": "timeout",
+      "label": "Timeout (path filtered)",
+      "resolver": "internal",
+      "cache": "empty",
+      "fault": "timeout"
+    },
+    {
+      "id": "stale_cache",
+      "label": "Stale cached answer",
+      "resolver": "internal",
+      "cache": "stale",
+      "fault": null,
+      "query": {
+        "name": "www.example.com",
+        "type": "A"
+      },
+      "stale_value": "198.51.100.9",
+      "note": "The resolver still holds an older address for this name; clients keep using it until the TTL expires."
+    },
+    {
+      "id": "bad_record",
+      "label": "Wrong authoritative record",
+      "resolver": "internal",
+      "cache": "empty",
+      "fault": "bad_record",
+      "query": {
+        "name": "www.example.com",
+        "type": "A"
+      }
+    }
+  ],
+  "notes": [
+    "The hosts file is consulted before DNS by NSS, so a hosts entry always wins for that name.",
+    "A warm cache skips the hierarchy entirely and returns the remaining TTL.",
+    "A public resolver has no view of corp.example, so internal names return NXDOMAIN.",
+    "TTL expiry is what people call propagation: caches persist until their own TTL runs out."
+  ]
+}

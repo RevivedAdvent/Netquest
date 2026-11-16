@@ -1,0 +1,98 @@
+{
+  "id": "m4l2",
+  "module_id": "m4",
+  "title": "traceroute, tracepath and MTR: reading the path",
+  "minutes": 18,
+  "summary": "How traceroute actually works, why some hops show stars, and how to tell real loss from ICMP rate limiting.",
+  "sections": [
+    {
+      "heading": "The mechanism",
+      "html": "<p>traceroute exploits the TTL field. For hop <em>n</em>:</p><ol class='steps'><li>Send a probe with TTL = n.</li><li>Router <em>n</em> decrements to 0, drops it, and returns ICMP time-exceeded.</li><li>The source address of that ICMP identifies router <em>n</em>.</li><li>Repeat with TTL = n+1 until the destination answers (or the max hop count is reached).</li></ol><p>The default probe type differs by implementation: Linux <code>traceroute</code> sends UDP to high ports (33434+) with the destination expected to reply ICMP port-unreachable; <code>traceroute -I</code> uses ICMP echo; <code>-T</code> uses TCP SYN, which traverses firewalls that block UDP and ICMP. That difference alone explains 'traceroute does not work but the service is fine'.</p>"
+    },
+    {
+      "heading": "Annotated output",
+      "html": "<pre><span class='c'>$ traceroute -n wiki.example.com</span>traceroute to wiki.example.com (203.0.113.20), 30 hops max, 60 byte packets\n 1  192.0.2.1      0.412 ms  0.398 ms  0.377 ms\n 2  198.51.100.9   1.204 ms  1.180 ms  1.233 ms\n 3  * * *\n 4  203.0.113.1    8.910 ms  9.003 ms  8.877 ms\n 5  203.0.113.20   12.102 ms  12.008 ms  12.341 ms</pre><ul><li><strong>* * *</strong> — no ICMP came back for those probes. Either the router does not generate time-exceeded (common, and it still forwards traffic) or a filter drops them. A star hop is <em>not</em> proof of a broken hop.</li><li><strong>Three times per hop</strong> — three probes. Wide variance means queuing or per-packet load balancing (different probes take different paths).</li><li><strong>Sudden latency jump</strong> — the distance grew, or you crossed a provider boundary, or a congested link.</li><li>Latency <em>decreasing</em> at a later hop suggests asymmetric routing or per-flow load balancing rather than a measurement error.</li></ul>"
+    },
+    {
+      "heading": "MTR: traceroute plus statistics",
+      "html": "<p>MTR continuously probes every hop and reports loss and latency per hop. This is the right tool for 'slow and inconsistent'.</p><pre><span class='c'>$ mtr -rwc 50 203.0.113.20</span>HOST                 Loss%   Snt   Last   Avg  Best  Wrst StDev\n  1. 192.0.2.1         0.0%    50    0.4   0.4   0.3   0.9   0.1\n  2. 198.51.100.9      0.0%    50    1.2   1.3   1.1   4.2   0.4\n  3. ???              0.0%    50    0.0   0.0   0.0   0.0   0.0\n  4. 203.0.113.1      22.0%    50    9.1  46.2   8.9 310.4  61.2\n  5. 203.0.113.20     22.0%    50   92.0 101.7   9.2 410.7 104.9</pre><p>Reading rules that actually work:</p><ul><li><strong>Loss that starts at a hop and continues to the end</strong> — likely a real problem at or after that hop.</li><li><strong>Loss at an intermediate hop that disappears later</strong> — almost always ICMP rate limiting on that router. The router forwards fine but replies to a fraction of TTL-exceeded messages.</li><li><strong>High StDev with low average</strong> — jitter, buffering or a congested uplink. Users experience this as 'slow' even with 0% loss.</li><li><strong>Loss only at the last hop</strong> — could be the server's own rate limiting; test the application port before declaring the network at fault.</li><li><strong>Loss at hop 1</strong> — local problem: cable, duplex, wireless, driver, or your own uplink saturated.</li></ul>"
+    },
+    {
+      "heading": "tracepath: the no-privilege alternative",
+      "html": "<p><code>tracepath</code> (from iputils) needs no raw sockets, so it works as an unprivileged user, and it discovers path MTU along the way:</p><pre><span class='c'>$ tracepath -n 203.0.113.20</span> 1?: [LOCALHOST]      pmtu 1500\n 1:  192.0.2.1              0.420ms\n 2:  198.51.100.9           1.220ms\n 3:  203.0.113.1            8.910ms\n 4:  203.0.113.20          12.100ms reached\n     Resume: pmtu 1500 hops 4 back 4</pre><p>The <code>pmtu</code> line tells you the largest packet that can traverse the path — directly useful for the 'big transfers hang' symptom. <code>hops</code> and <code>back</code> comparing forward and return hop counts is a cheap asymmetry hint.</p>"
+    },
+    {
+      "heading": "When traceroute itself is the problem",
+      "html": "<p>If traceroute shows stars all the way but the service works, nothing is wrong with the network — your probes are filtered. Use <code>traceroute -T -p 443 host</code> (TCP SYN to the actual service port), which is far more likely to be allowed than UDP or ICMP. This is a diagnostic technique worth demonstrating in an interview: it shows you understand that <em>the probe type is part of the experiment</em>.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m4l2-1",
+      "type": "mcq",
+      "prompt": "MTR shows 15% loss at hop 7 and 0% loss at hops 8-12 including the destination. What is the conclusion?",
+      "options": [
+        "The path is asymmetric",
+        "The destination is overloaded",
+        "Hop 7 is losing real traffic",
+        "Hop 7 rate-limits ICMP replies; actual forwarding is fine"
+      ],
+      "answer": 3,
+      "explanation": "Loss that appears at one hop and vanishes downstream is the classic signature of ICMP rate limiting on that router.",
+      "why_wrong": {
+        "2": "Real loss at hop 7 would persist to the destination.",
+        "1": "The destination shows 0% loss.",
+        "0": "Asymmetry does not produce this specific pattern."
+      },
+      "concepts": [
+        "ICMP rate limiting",
+        "MTR interpretation"
+      ]
+    },
+    {
+      "id": "q-m4l2-2",
+      "type": "mcq",
+      "prompt": "Which traceroute variant is most likely to traverse a firewall that drops UDP and ICMP?",
+      "options": [
+        "traceroute -T -p 443",
+        "tracepath",
+        "traceroute -I",
+        "traceroute (default UDP)"
+      ],
+      "answer": 0,
+      "explanation": "TCP SYN probes to an allowed port look like real application traffic and are usually permitted.",
+      "why_wrong": {
+        "3": "UDP to high ports is often blocked.",
+        "2": "ICMP echo is frequently filtered.",
+        "1": "tracepath uses UDP, so it has the same problem."
+      },
+      "concepts": [
+        "traceroute probe types"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "ICMP",
+      "text": "Traceroute is built entirely on ICMP time-exceeded — the same protocol ping uses."
+    },
+    {
+      "title": "Routing / LPM",
+      "text": "Each hop makes an independent longest-prefix-match decision; the path is the sum of those decisions."
+    },
+    {
+      "title": "Case study 6",
+      "text": "Intermittent loss distinguishes endpoint from transit issues with exactly these tools."
+    }
+  ],
+  "interview": [
+    {
+      "q": "How does traceroute work?",
+      "a": "It sends probes with incrementing TTL values. Each router that decrements TTL to zero returns ICMP time-exceeded, revealing its address. The destination eventually answers with port-unreachable (UDP mode), echo reply (ICMP mode) or SYN-ACK/RST (TCP mode)."
+    },
+    {
+      "q": "What does a starred hop mean?",
+      "a": "That no ICMP response arrived for the probes — often because the router does not generate or rate-limits time-exceeded messages while still forwarding packets normally. It is not evidence that the hop is broken unless loss continues downstream."
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+{
+  "id": "case08",
+  "order": 8,
+  "title": "The branch that can hear but not answer",
+  "module_id": "m5",
+  "difficulty": "advanced",
+  "tagline": "The new branch can reach nothing, but the branch router can reach everything. One direction of the path is missing.",
+  "environment": ["New branch router R3", "Core router R2", "Edge router R1", "Static routing only, no dynamic protocol"],
+  "topology": "branch 10.0.40.0/24 -- R3 -- 10.0.30.0/24 -- R2 -- 10.0.99.0/30 -- R1 -- 10.0.10.0/24 (HQ)",
+  "symptoms": [
+    "Hosts at the branch cannot ping HQ (10.0.10.0/24) or the internet",
+    "From R3, ping to 10.0.10.50 succeeds",
+    "From HQ, ping to 10.0.40.55 fails",
+    "traceroute from the branch stops after the first hop or shows no reply from HQ"
+  ],
+  "objectives": [
+    "Use directional testing to localise a one-way failure",
+    "Read a routing table for what is missing rather than what is present",
+    "Explain why a ping can succeed in one direction and fail in the other"
+  ],
+  "tools": ["ip route", "ip route get", "ping", "traceroute", "tcpdump"],
+  "framework": [
+    "Which direction fails? Test both explicitly.",
+    "Does the far end have a route back to the source?",
+    "Is the return path symmetric, and does it matter here?"
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "label": "Branch host to HQ",
+      "command": "ping -c2 10.0.10.50",
+      "output": "PING 10.0.10.50 (10.0.10.50) 56(84) bytes of data.\nFrom 10.0.40.1 icmp_seq=1 Destination Net Unreachable\nFrom 10.0.40.1 icmp_seq=2 Destination Net Unreachable",
+      "insight": "The branch gateway itself says the network is unreachable, so the failure is at R3's routing table, not at the destination.",
+      "requires": []
+    },
+    {
+      "id": "e2",
+      "label": "R3's routing table",
+      "command": "ip route",
+      "output": "10.0.30.0/24 dev eth0 proto kernel scope link src 10.0.30.2\n10.0.40.0/24 dev eth1 proto kernel scope link src 10.0.40.1\ndefault via 10.0.30.1 dev eth0 proto static metric 100",
+      "insight": "R3 has a default route, so it should not say 'net unreachable' for 10.0.10.50. Either the default is not being used or the packet is being rejected for another reason — check the actual lookup.",
+      "requires": ["e1"]
+    },
+    {
+      "id": "e3",
+      "label": "The lookup R3 actually performs",
+      "command": "ip route get 10.0.10.50",
+      "output": "10.0.10.50 via 10.0.30.1 dev eth0 src 10.0.40.1\n    cache",
+      "insight": "The lookup succeeds via the default. So R3 forwards the packet, and the 'net unreachable' must be generated further along the path — the ICMP source address is the clue.",
+      "requires": ["e2"]
+    },
+    {
+      "id": "e4",
+      "label": "Test from R3 itself",
+      "command": "ping -c2 -I 10.0.30.2 10.0.10.50",
+      "output": "PING 10.0.10.50 (10.0.10.50) from 10.0.30.2 : 56(84) bytes of data.\n64 bytes from 10.0.10.50: icmp_seq=1 ttl=62 time=9.1 ms\n64 bytes from 10.0.10.50: icmp_seq=2 ttl=62 time=9.2 ms",
+      "insight": "Sourced from R3's uplink address, the ping works. Sourced from the branch subnet, it fails. That difference is the whole case: the return path exists for 10.0.30.0/24 but not for 10.0.40.0/24.",
+      "requires": ["e3"]
+    },
+    {
+      "id": "e5",
+      "label": "R2's table: is there a route back?",
+      "command": "ip route | grep -E '10.0.40|10.0.10'",
+      "output": "10.0.10.0/24 via 10.0.99.1 dev eth0 proto static metric 10\n10.0.40.0/24 via 10.0.30.2 dev eth2 proto static metric 20",
+      "insight": "R2 does have a route to 10.0.40.0/24. So the break is not at R2 either. Check the edge router, which is where the ICMP came from.",
+      "requires": ["e4"]
+    },
+    {
+      "id": "e6",
+      "label": "R1's table: the missing return route",
+      "command": "ip route | grep -E '10.0.40|10.0.30|default'",
+      "output": "10.0.10.0/24 dev eth0 proto kernel scope link src 10.0.10.1\n10.0.99.0/30 dev eth1 proto kernel scope link src 10.0.99.1\ndefault via 10.0.99.2 dev eth1 proto static metric 100",
+      "insight": "R1 has no route to 10.0.40.0/24. Its default points back to R2, which sends the packet to R3, which sends it back to R2 — but R1's own reply to the branch source has nowhere to go, so it returns ICMP net-unreachable with its own address as the source.",
+      "requires": ["e5"]
+    },
+    {
+      "id": "e7",
+      "label": "Confirm the asymmetry on the wire",
+      "command": "sudo tcpdump -ni eth1 icmp -c 6",
+      "output": "10:52:01.001 IP 10.0.40.55 > 10.0.10.50: ICMP echo request, id 3, seq 1\n10:52:01.010 IP 10.0.10.1 > 10.0.40.55: ICMP 10.0.10.50 udp port 33434 unreachable, length 36",
+      "insight": "The request arrives at R1 and R1 answers with an unreachable message. The forward path works; the return path from R1 to 10.0.40.0/24 does not exist.",
+      "requires": ["e6"]
+    }
+  ],
+  "hypotheses": [
+    {"text": "The branch link is down.", "verdict": "rejected", "why": "R3 can ping HQ when sourced from its uplink address, so the link and the forward path are healthy."},
+    {"text": "R1 has no route back to the branch subnet, so replies are dropped and ICMP unreachable is returned.", "verdict": "accepted", "why": "R1's table has no 10.0.40.0/24 entry, the ICMP unreachable is sourced from R1, and the same ping works when sourced from a subnet R1 does know."},
+    {"text": "The branch hosts have the wrong default gateway.", "verdict": "rejected", "why": "The gateway is R3 and R3 forwards correctly; the failure is on the return path."},
+    {"text": "A firewall is blocking ICMP.", "verdict": "rejected", "why": "ICMP is being generated and delivered; the problem is that a route is missing, not that a policy is applied."}
+  ],
+  "min_evidence": 4,
+  "diagnosis_accept": ["return route", "no route back", "missing route", "r1 has no route", "asymmetric"],
+  "diagnosis_reject": ["link is down", "firewall", "dns", "wrong gateway on the hosts", "cable"],
+  "solution": {
+    "root_cause": "R1 (the edge router) has no route to the branch subnet 10.0.40.0/24. Forward traffic from the branch reaches HQ, but R1 cannot return it, so it generates ICMP network-unreachable sourced from its own address. The path is asymmetric because the return route was never added when the branch was commissioned.",
+    "resolution": "Add the return route on R1: ip route add 10.0.40.0/24 via 10.0.99.2 (persisted in the configuration, not just the running state). In a static-routing design, every new subnet needs an entry on every router that must reach it — or a summary route covering the branch block.",
+    "verification": "ping from a branch host to HQ succeeds in both directions; traceroute shows a complete path; ip route get on R1 for 10.0.40.55 resolves via 10.0.99.2; and a capture shows echo replies rather than unreachable messages.",
+    "lessons": [
+      "Always test both directions. A one-way failure is a routing-table asymmetry, not a broken link.",
+      "The source address of an ICMP error identifies the router that gave up. Read it before guessing.",
+      "Static routing has no automatic return path. Every subnet must be added deliberately on both sides."
+    ],
+    "interview_followups": [
+      "How would a dynamic routing protocol have prevented this?",
+      "What is the difference between 'Destination Net Unreachable' and 'Destination Host Unreachable'?",
+      "How do you make static routes survive a reboot on Linux?"
+    ]
+  },
+  "resolution_options": [
+    {"text": "Add 10.0.40.0/24 via 10.0.99.2 on R1 and persist it", "correct": true, "why": "Restores the missing return path for the branch subnet."},
+    {"text": "Add a summary route for the branch block on R1", "correct": true, "why": "Also correct and scales better if more branch subnets are planned."},
+    {"text": "Add a default route on R1 pointing at R3", "correct": false, "why": "Would send all unknown traffic to the branch and create a loop with R2's default."},
+    {"text": "Change the branch hosts' gateway", "correct": false, "why": "The gateway is correct; the return path is missing."},
+    {"text": "Enable NAT on R3", "correct": false, "why": "Hides the branch behind one address and breaks end-to-end addressing; it treats a routing omission as a design change."}
+  ],
+  "interview_questions": [
+    {"q": "A ping works from A to B but not from B to A. How do you investigate?", "a": "Treat it as two independent paths. Check B's route to A's source address, then capture at the last hop that forwards successfully to see where the reply stops. The source address of any ICMP error tells you which router gave up."},
+    {"q": "What does 'Destination Net Unreachable' tell you that 'Host Unreachable' does not?", "a": "Net unreachable means the router has no route for the destination prefix at all. Host unreachable usually means the prefix is known but the specific host did not answer ARP on the final segment."},
+    {"q": "Why is static routing error-prone at scale?", "a": "Every router needs an entry for every destination, and nothing propagates changes. A single omission produces a one-way failure that is invisible until someone tests in that direction."}
+  ]
+}

@@ -1,0 +1,576 @@
+{
+  "labs": [
+    {
+      "id": "find",
+      "command": "find",
+      "group": "Linux files and permissions",
+      "module_id": "m6",
+      "tagline": "Search by metadata: size, time, owner, permissions.",
+      "problem": "Locate files by attributes, especially 'what changed recently' and 'what is filling the disk'.",
+      "how": "Walks directory trees applying tests and actions. It traverses the filesystem, so bounding it matters.",
+      "syntax": "find PATH [tests] [actions]",
+      "flags": [
+        {
+          "flag": "-type f|d|l",
+          "why": "Restrict to files, directories or symlinks."
+        },
+        {
+          "flag": "-size +100M",
+          "why": "Test by size."
+        },
+        {
+          "flag": "-mmin -60",
+          "why": "Modified within the last 60 minutes — change analysis."
+        },
+        {
+          "flag": "-xdev",
+          "why": "Stay on one filesystem; avoids network and virtual mounts."
+        },
+        {
+          "flag": "-printf '%s\\t%p\\n'",
+          "why": "Machine-readable size and path."
+        },
+        {
+          "flag": "-delete",
+          "why": "Remove matches. Bound the path and preview first."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "sudo find /var -xdev -type f -size +200M -printf '%s\\t%p\\n' | sort -rn | head",
+          "note": "Biggest files in /var."
+        },
+        {
+          "cmd": "sudo find /etc -type f -mmin -60 -ls",
+          "note": "What changed in /etc in the last hour."
+        },
+        {
+          "cmd": "sudo find / -xdev -type f -perm -0002 2>/dev/null",
+          "note": "World-writable files (security check)."
+        }
+      ],
+      "sample": "$ sudo find /var -xdev -type f -size +200M -printf '%s\\t%p\\n' | sort -rn | head -3\n1073741824\t/var/log/journal/system.journal\n402653184\t/var/lib/libvirt/images/vm.qcow2\n268435456\t/var/cache/dnf/packages.db",
+      "read": [
+        "The first column is bytes; divide by 1048576 for MiB.",
+        "A huge journal file suggests uncontrolled logging; check with journalctl --disk-usage.",
+        "-mmin counts minutes, -mtime counts days. Use -mmin for incident timelines.",
+        "Permission test -perm -0002 means 'others have write', i.e. world-writable."
+      ],
+      "mistakes": [
+        "Running find / without -xdev on a machine with NFS mounts (slow, sometimes hangs).",
+        "Using -delete on an unbounded path. Preview without -delete first.",
+        "Forgetting that find does not follow symlinks unless -L is given."
+      ],
+      "when": "Investigations about disk usage, recent changes or file permissions.",
+      "followups": [
+        "du -xh /var | sort -h | tail",
+        "journalctl --disk-usage",
+        "ls -l FILE"
+      ],
+      "try": {
+        "scenario": "Practise change analysis safely inside your own practice directory instead of system paths.",
+        "task": "Create the practice directory, make a file, and find files modified recently with sizes.",
+        "command": "mkdir -p ~/netquest-practice && touch ~/netquest-practice/note.txt && find ~/netquest-practice -type f -mmin -10 -printf '%s\\t%p\\n'",
+        "expected_patterns": [
+          {
+            "pattern": "netquest-practice",
+            "label": "the practice directory path in the output"
+          },
+          {
+            "pattern": "note\\.txt",
+            "label": "the file created during the exercise"
+          },
+          {
+            "pattern": "^\\d+\\s+/",
+            "label": "the size then path format"
+          }
+        ],
+        "verdict_ok": "You ran a time-bounded find with machine-readable output — the same pattern used for incident change analysis.",
+        "verdict_missing": "Paste the find output lines, including the size column."
+      },
+      "simulate": {
+        "intro": "An engineer runs this after 'the disk is full'. Read it.",
+        "terminal": "$ sudo find /var -xdev -type f -size +100M -printf '%s\\t%p\\n' | sort -rn | head -3\n1073741824\t/var/log/journal/abc123/system.journal\n536870912\t/var/log/messages\n268435456\t/var/lib/docker/containers/xyz/xyz-json.log",
+        "questions": [
+          {
+            "id": "lab-find-s1",
+            "prompt": "What is the best first action?",
+            "options": [
+              "Delete the journal directory",
+              "Investigate logging configuration and rotate/vacuum, since the top three files are all logs",
+              "Restart the machine",
+              "Add a new disk immediately"
+            ],
+            "answer": 1,
+            "explanation": "All three are logs, so the cause is volume or lack of rotation, not user data. Vacuum or rotate before deleting anything.",
+            "why_wrong": {
+              "0": "Removes evidence and may break journald state.",
+              "3": "Treats the symptom and hides the cause.",
+              "2": "Destructive and irrelevant."
+            }
+          },
+          {
+            "id": "lab-find-s2",
+            "prompt": "Which command shows how much space the journal is using, safely?",
+            "options": [
+              "du -s /",
+              "find /var/log -delete",
+              "rm -rf /var/log/journal",
+              "journalctl --disk-usage"
+            ],
+            "answer": 3,
+            "explanation": "It reports the journal's size without changing anything.",
+            "why_wrong": {
+              "2": "Destroys logs.",
+              "1": "Unbounded delete across all logs.",
+              "0": "Summarises the whole filesystem slowly."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "A service started failing after a colleague 'changed something' an hour ago.",
+        "question": "Which command best drives the investigation?",
+        "options": [
+          "sudo find /etc -type f -mmin -90 -ls",
+          "locate config",
+          "du -sh /etc",
+          "sudo find / -name '*.conf'"
+        ],
+        "answer": 0,
+        "explanation": "Time-bounded search in /etc directly answers 'what changed'.",
+        "why_wrong": {
+          "3": "Returns everything, with no time filter.",
+          "1": "Name search ignores modification time.",
+          "2": "Reports a total size."
+        }
+      }
+    },
+    {
+      "id": "grep",
+      "command": "grep",
+      "group": "Linux files and permissions",
+      "module_id": "m6",
+      "tagline": "Search content, not names.",
+      "problem": "Find where a setting, error string or pattern actually appears in files or logs.",
+      "how": "Matches lines against a pattern (BRE by default, ERE with -E, fixed strings with -F).",
+      "syntax": "grep [options] PATTERN [FILES...]",
+      "flags": [
+        {
+          "flag": "-r",
+          "why": "Recurse into directories."
+        },
+        {
+          "flag": "-n",
+          "why": "Show line numbers."
+        },
+        {
+          "flag": "-i",
+          "why": "Case-insensitive."
+        },
+        {
+          "flag": "-I",
+          "why": "Skip binary files."
+        },
+        {
+          "flag": "-F",
+          "why": "Fixed string: no regex interpretation."
+        },
+        {
+          "flag": "-A/-B/-C N",
+          "why": "Context lines after/before/both."
+        },
+        {
+          "flag": "--include=GLOB",
+          "why": "Restrict which files are searched."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "sudo grep -rn --include='*.conf' 'Listen' /etc",
+          "note": "Which config sets this directive?"
+        },
+        {
+          "cmd": "grep -niI 'connection refused' /var/log/messages | tail",
+          "note": "Error search with line numbers, skipping binaries."
+        },
+        {
+          "cmd": "grep -c 'error' /var/log/app.log",
+          "note": "Count occurrences."
+        }
+      ],
+      "sample": "$ sudo grep -rn --include='*.conf' 'Listen' /etc/httpd/conf/\n/etc/httpd/conf/httpd.conf:42:Listen 80\n/etc/httpd/conf.d/ssl.conf:14:Listen 443 https",
+      "read": [
+        "Output is file:line:text, which is exactly what you need to cite a configuration.",
+        "Multiple matches in different files mean precedence matters: later includes usually override earlier ones.",
+        "In logs, -C 2 context is often more informative than the matching line alone.",
+        "The exit code is 0 for a match, 1 for no match, 2 for an error — which is why `grep -q` is used in scripts."
+      ],
+      "mistakes": [
+        "Using grep -r on a huge tree without --include, matching binaries.",
+        "Assuming the first match is the effective one; load order decides.",
+        "Forgetting -F when the pattern contains regex metacharacters like . or [."
+      ],
+      "when": "Any 'where is this configured' or 'when did this error appear' question.",
+      "followups": [
+        "systemctl cat SERVICE",
+        "journalctl -u SERVICE",
+        "grep -c PATTERN FILE"
+      ],
+      "try": {
+        "scenario": "Find which nsswitch line governs host resolution, and search your practice file for a string.",
+        "task": "Grep for the hosts line in nsswitch.conf and for a word in your practice file.",
+        "command": "grep -n '^hosts' /etc/nsswitch.conf; echo ---; echo 'dns example' > ~/netquest-practice/note.txt; grep -n 'example' ~/netquest-practice/note.txt",
+        "expected_patterns": [
+          {
+            "pattern": "(?m)^\\d+:hosts:\\s*\\S+",
+            "label": "the nsswitch hosts line with a line number"
+          },
+          {
+            "pattern": "example",
+            "label": "the match from your practice file"
+          }
+        ],
+        "verdict_ok": "You have the effective NSS order and a content match with line numbers — the standard grep evidence pattern.",
+        "verdict_missing": "Include both outputs; the first shows the configuration lineage, the second the match syntax."
+      },
+      "simulate": {
+        "intro": "A service reads the wrong setting. Two files match.",
+        "terminal": "$ grep -rn --include='*.conf' 'max_connections' /etc/myapp/\n/etc/myapp/myapp.conf:12:max_connections = 100\n/etc/myapp/conf.d/override.conf:3:max_connections = 20\n$ systemctl cat myapp | grep -n 'EnvironmentFile\\|ExecStart'\n5:EnvironmentFile=-/etc/sysconfig/myapp\n8:ExecStart=/usr/bin/myapp --config /etc/myapp/myapp.conf",
+        "questions": [
+          {
+            "id": "lab-grep-s1",
+            "prompt": "Why might the effective value not be the one you expect?",
+            "options": [
+              "The file is read only once at install time",
+              "grep is unreliable",
+              "Load order and includes determine the final value; override.conf may be read after myapp.conf, and an EnvironmentFile or CLI flag can win again",
+              "systemd caches configuration"
+            ],
+            "answer": 2,
+            "explanation": "The last value applied wins, which depends on include order plus environment and command-line precedence.",
+            "why_wrong": {
+              "1": "grep shows the truth of the files.",
+              "0": "No, it is read at start.",
+              "3": "It re-reads on restart."
+            }
+          },
+          {
+            "id": "lab-grep-s2",
+            "prompt": "What is the decisive check for the effective value?",
+            "options": [
+              "stat the file",
+              "Check the file's owner",
+              "The running process's actual configuration/log output, or `systemctl show` for unit-level overrides",
+              "grep the file again"
+            ],
+            "answer": 2,
+            "explanation": "Evidence from the running process (its log line stating the value, or its effective config endpoint) beats inference from files.",
+            "why_wrong": {
+              "3": "You already have the matches.",
+              "0": "Metadata does not determine content.",
+              "1": "Ownership is not precedence."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "You must prove which resolver the system uses, rather than assuming.",
+        "question": "Which command gives direct evidence?",
+        "options": [
+          "grep -n nameserver /etc/resolv.conf (plus checking whether systemd-resolved is active)",
+          "cat /etc/hosts",
+          "grep -rn systemd /",
+          "grep -r dns /etc/hosts"
+        ],
+        "answer": 0,
+        "explanation": "resolv.conf is the configured resolver source; paired with the service state it identifies the effective resolver.",
+        "why_wrong": {
+          "3": "hosts has no nameserver lines.",
+          "2": "Unbounded and irrelevant.",
+          "1": "hosts is a static override table."
+        }
+      }
+    },
+    {
+      "id": "tar",
+      "command": "tar",
+      "group": "Linux files and permissions",
+      "module_id": "m6",
+      "tagline": "Archive and restore without losing permissions.",
+      "problem": "Bundle a directory for transfer or backup, preserving ownership, modes and times where possible.",
+      "how": "Tape ARchive: creates a stream of file metadata and contents. Compresses with gzip/xz/zstd.",
+      "syntax": "tar -c|-x|-t [-z|-J] -f ARCHIVE [-C DIR] [PATHS]",
+      "flags": [
+        {
+          "flag": "-czf",
+          "why": "Create a gzip-compressed archive."
+        },
+        {
+          "flag": "-xzf",
+          "why": "Extract."
+        },
+        {
+          "flag": "-tf",
+          "why": "List contents without extracting."
+        },
+        {
+          "flag": "-C DIR",
+          "why": "Change to DIR first — prevents absolute paths in the archive."
+        },
+        {
+          "flag": "-p",
+          "why": "Preserve permissions when extracting (default for root)."
+        },
+        {
+          "flag": "--exclude=PATTERN",
+          "why": "Skip paths such as caches or node_modules."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "tar -czf ~/backup.tgz -C /var/lib/myapp .",
+          "note": "Archive a directory with relative paths."
+        },
+        {
+          "cmd": "tar -tzf ~/backup.tgz | head",
+          "note": "Verify before extracting."
+        },
+        {
+          "cmd": "tar -xzf ~/backup.tgz -C /tmp/restore",
+          "note": "Extract into a scratch directory first."
+        }
+      ],
+      "sample": "$ tar -czf ~/netquest-practice/app.tgz -C ~/netquest-practice .\n$ tar -tzvf ~/netquest-practice/app.tgz\ndrwxr-xr-x user/user    0 2026-11-17 10:02 ./\n-rw-r--r-- user/user   12 2026-11-17 10:02 ./note.txt",
+      "read": [
+        "The listing shows mode, owner/group, size, mtime and path — check ownership before restoring into a system path.",
+        "Paths beginning with ./ are relative, which is what you want; absolute paths extract over the live filesystem.",
+        "Extraction as root preserves ownership; as a normal user, files become yours, which can break a service that expects a specific owner.",
+        "Compression choice matters for speed: zstd is much faster than gzip for similar ratios."
+      ],
+      "mistakes": [
+        "Creating archives with absolute paths, then extracting them over a live system.",
+        "Extracting directly into /etc or /var without listing first.",
+        "Losing ownership by restoring as the wrong user — the exact bug Module 6 case study 10 describes."
+      ],
+      "when": "Backups, transferring a tree, or proving a permissions problem during restore.",
+      "followups": [
+        "tar -tvf ARCHIVE",
+        "getfacl FILE",
+        "getenforce"
+      ],
+      "try": {
+        "scenario": "Create an archive of your practice directory inside that directory, then verify it without extracting.",
+        "task": "Archive and list, using relative paths via -C.",
+        "command": "cd ~/netquest-practice && tar -czf app.tgz -C . . && tar -tzvf app.tgz | head -5",
+        "expected_patterns": [
+          {
+            "pattern": "(?m)^[-dl][rwx-]{9}",
+            "label": "a mode string in the archive listing"
+          },
+          {
+            "pattern": "note\\.txt|app\\.tgz|\\./",
+            "label": "the archived paths"
+          },
+          {
+            "pattern": "\\d{4}-\\d{2}-\\d{2}",
+            "label": "a modification timestamp"
+          }
+        ],
+        "verdict_ok": "You have a relative-path archive and a verified listing — the safe pattern.",
+        "verdict_missing": "Paste the tar -tzvf listing, which shows mode, owner and path."
+      },
+      "simulate": {
+        "intro": "A restore broke a service. Read the archive listing.",
+        "terminal": "$ tar -tzvf restore.tgz | head -3\n-rw-r--r-- alice alice 4096 2026-11-16 22:10 ./etc/myapp/config.yml\n-rwxr-xr-x alice alice 8192 2026-11-16 22:10 ./etc/myapp/bin/start.sh\n\n$ ls -l /etc/myapp/config.yml\n-rw-r--r-- 1 alice alice 4096 Nov 16 22:10 /etc/myapp/config.yml",
+        "questions": [
+          {
+            "id": "lab-tar-s1",
+            "prompt": "Why does the service now fail with 'Permission denied'?",
+            "options": [
+              "The archive is encrypted",
+              "SELinux always blocks restores",
+              "tar corrupted the file",
+              "The file is owned by alice with mode 640-equivalent group access missing for the service user, so the restore changed ownership"
+            ],
+            "answer": 3,
+            "explanation": "Restoring as alice made alice the owner; the service runs as another user or group and lost read access.",
+            "why_wrong": {
+              "2": "The listing shows intact metadata.",
+              "0": "Nothing indicates encryption.",
+              "1": "SELinux may contribute, but the ownership change already explains it."
+            }
+          },
+          {
+            "id": "lab-tar-s2",
+            "prompt": "What is the correct fix?",
+            "options": [
+              "chmod 777 the file",
+              "Restore ownership and mode to the documented values (e.g. root:myapp 640), then relabel if SELinux requires it",
+              "Reinstall the service",
+              "Run the service as alice"
+            ],
+            "answer": 1,
+            "explanation": "Least privilege: restore the intended owner/group and mode, then check the SELinux context with ls -Z.",
+            "why_wrong": {
+              "0": "Grants write to everyone.",
+              "3": "Changes the security model to fit a mistake.",
+              "2": "Unnecessary."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "You must move a directory to another server preserving ownership for a service.",
+        "question": "Which approach is correct?",
+        "options": [
+          "chmod 777 after copying",
+          "tar -czf with -C to keep relative paths, transfer, extract as root, then verify owner/mode and SELinux context",
+          "tar with absolute paths and extract over /",
+          "scp -r as your user"
+        ],
+        "answer": 1,
+        "explanation": "Relative paths plus root extraction preserve metadata; verification catches the rest.",
+        "why_wrong": {
+          "2": "Absolute paths overwrite unintended files.",
+          "3": "scp -r as a normal user changes ownership.",
+          "0": "Destroys the permission model."
+        }
+      }
+    },
+    {
+      "id": "ln",
+      "command": "ln",
+      "group": "Linux files and permissions",
+      "module_id": "m6",
+      "tagline": "Symlinks and hard links, and the failures they cause.",
+      "problem": "Create an alias path (versioned releases, config switching) and understand why a link can break a service.",
+      "how": "Hard link: a second directory entry for the same inode. Symlink (-s): a file containing a path, resolved at access time.",
+      "syntax": "ln [-s] TARGET LINK_NAME",
+      "flags": [
+        {
+          "flag": "-s",
+          "why": "Symbolic link (most common)."
+        },
+        {
+          "flag": "-f",
+          "why": "Replace an existing link (careful with directories)."
+        },
+        {
+          "flag": "-n",
+          "why": "Do not dereference an existing symlink to a directory — prevents replacing the target's contents."
+        },
+        {
+          "flag": "-r",
+          "why": "Create a symlink with a relative path."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "ln -sfn /opt/app/releases/v2 /opt/app/current",
+          "note": "Atomic release switch."
+        },
+        {
+          "cmd": "ln -s ../shared/data link-to-data",
+          "note": "Relative symlink."
+        },
+        {
+          "cmd": "ls -li file file-hard",
+          "note": "Same inode number and a link count of 2."
+        }
+      ],
+      "sample": "$ ls -li\n262145 -rw-r--r--. 2 app app   42 Nov 17 10:00 config.yml\n262145 -rw-r--r--. 2 app app   42 Nov 17 10:00 config.bak\n262146 lrwxrwxrwx. 1 root root  14 Nov 17 10:00 current -> releases/v2",
+      "read": [
+        "Identical inode numbers mean hard links to the same data; editing one changes both.",
+        "A symlink's mode is always lrwxrwxrwx — the permissions that matter are the target's.",
+        "A relative symlink resolves from the link's directory, so moving either can break it.",
+        "A dangling symlink shows the target name but the target does not exist; access fails with ENOENT."
+      ],
+      "mistakes": [
+        "Using ln -sf without -n on a directory symlink, which can replace the target directory's contents.",
+        "Moving a symlink and breaking its relative target.",
+        "Assuming a symlink inherits the target's permissions — it does not; path resolution uses the target's own mode."
+      ],
+      "when": "Versioned deployments, config switching, and any 'broken path' investigation.",
+      "followups": [
+        "readlink -f LINK",
+        "namei -l PATH",
+        "ls -l"
+      ],
+      "try": {
+        "scenario": "Practise the atomic-release pattern and prove which inode each name points to.",
+        "task": "Create two directories and a current symlink, then query its resolution.",
+        "command": "mkdir -p ~/netquest-practice/rel/v1 ~/netquest-practice/rel/v2 && ln -sfn v2 ~/netquest-practice/rel/current && ls -l ~/netquest-practice/rel/ && readlink -f ~/netquest-practice/rel/current",
+        "expected_patterns": [
+          {
+            "pattern": "current -> v2",
+            "label": "the symlink pointing at v2"
+          },
+          {
+            "pattern": "netquest-practice/rel/(v1|v2)",
+            "label": "the resolved absolute path"
+          }
+        ],
+        "verdict_ok": "You have a versioned symlink and its resolved path — the deployment pattern used in real systems.",
+        "verdict_missing": "Paste the ls -l line and the readlink output."
+      },
+      "simulate": {
+        "intro": "A service fails after a deployment. Read the state.",
+        "terminal": "$ ls -l /opt/app/\nlrwxrwxrwx 1 root root 6 Nov 17 09:59 current -> rel/v2\n$ ls -l /opt/app/rel/\ndrwxr-xr-x 2 root root 6 Nov 17 09:00 v1\n$ readlink -f /opt/app/current\n/opt/app/rel/v2\n$ cat /opt/app/current/config.yml\ncat: /opt/app/current/config.yml: No such file or directory",
+        "questions": [
+          {
+            "id": "lab-ln-s1",
+            "prompt": "What is wrong?",
+            "options": [
+              "The symlink has the wrong permissions",
+              "The service user lacks read access",
+              "readlink is broken",
+              "The symlink points at rel/v2, which does not exist — the deployment renamed the release directory"
+            ],
+            "answer": 3,
+            "explanation": "Only v1 exists, so the link is dangling; readlink -f resolves the path syntactically but the target is absent.",
+            "why_wrong": {
+              "0": "Symlink modes are ignored during access.",
+              "1": "The file cannot be found at all.",
+              "2": "It reported the intended path correctly."
+            }
+          },
+          {
+            "id": "lab-ln-s2",
+            "prompt": "What is the safe corrective action?",
+            "options": [
+              "Repoint current to the correct release with ln -sfn and verify readlink -f plus the service restart",
+              "Delete the symlink and copy files into place",
+              "chmod 777 the release directory",
+              "Restart the whole machine"
+            ],
+            "answer": 0,
+            "explanation": "Atomic repointing with -sfn is the intended mechanism; verification confirms the target exists.",
+            "why_wrong": {
+              "1": "Loses the deployment model.",
+              "2": "Violates least privilege.",
+              "3": "Does not fix a dangling link."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "A user reports 'No such file or directory' for a path that exists in ls.",
+        "question": "What do you check?",
+        "options": [
+          "The DNS resolver",
+          "The disk size",
+          "Whether one of the path components is a dangling symlink — namei -l PATH shows resolution per component",
+          "The file's contents"
+        ],
+        "answer": 2,
+        "explanation": "A dangling intermediate symlink produces ENOENT even though the final name 'exists' in a listing.",
+        "why_wrong": {
+          "3": "You cannot read it.",
+          "1": "Unrelated to path resolution.",
+          "0": "Unrelated."
+        }
+      }
+    }
+  ]
+}

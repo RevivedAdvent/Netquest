@@ -1,0 +1,42 @@
+{% macro checks(questions, module_id, context) %}
+{% for q in questions %}
+<div class="check-block" data-qid="{{ q.id }}" data-type="{{ q.type | default('mcq') }}">
+  <div class="qhead">
+    <span class="small">{{ context }} &middot; question {{ loop.index }}{% if q.type == 'self' %} &middot; self-assessed{% endif %}</span>
+    {% if q.type == 'mcq' %}<span class="badge mono">MCQ</span>
+    {% elif q.type == 'self' %}<span class="badge">checklist</span>
+    {% else %}<span class="badge mono">paste output</span>{% endif %}
+  </div>
+  <div class="qtext">{{ q.prompt }}</div>
+
+  {% if q.type == 'mcq' %}
+    {% for opt in q.options %}
+    <label class="option"><input type="radio" name="{{ q.id }}" value="{{ loop.index0 }}"><span>{{ opt }}</span></label>
+    {% endfor %}
+  {% elif q.type == 'self' %}
+    <p class="small mb8">Write your answer in your own words, then tick exactly what you covered. Ticking things you did not say only hides a gap from yourself.</p>
+    <textarea class="prose" placeholder="Your answer…"></textarea>
+    <div class="mt8">
+      {% for item in q.checklist %}
+      <label class="checkitem"><input type="checkbox" name="{{ q.id }}" value="{{ item.text }}"><span>{{ item.text }}</span></label>
+      {% endfor %}
+    </div>
+    {% if q.reference %}
+    <div class="btn-row mt8">
+      <button class="btn ghost small reveal-ref" type="button">Show reference answer</button>
+    </div>
+    <div class="ref-block hidden mt8 note">{{ q.reference | safe }}</div>
+    {% endif %}
+  {% else %}
+    <p class="small mb8">Run the command on your machine and paste the relevant output. Output is graded against expected patterns; the raw text is not stored.</p>
+    <textarea placeholder="Paste terminal output here…"></textarea>
+  {% endif %}
+
+  <div class="btn-row mt8">
+    <button class="btn small primary check-submit" type="button">Check answer</button>
+    {% if q.type == 'self' %}<span class="small muted">Saved as self-assessed</span>{% endif %}
+  </div>
+  <div class="fb"></div>
+</div>
+{% endfor %}
+{% endmacro %}

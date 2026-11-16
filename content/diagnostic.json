@@ -1,0 +1,292 @@
+{
+  "title": "Diagnostic: where should you actually start?",
+  "intro": "Fourteen questions across the seven modules. This is not a beginner test: it exists to decide which modules you can skip and which need real work. Answer honestly and do not look things up — a wrong answer here only saves you time later.",
+  "minutes": 15,
+  "scoring": "A module at 75% or above is marked strong and deprioritised. Below that, it goes on your path. Your interview date and accelerated mode decide the order.",
+  "questions": [
+    {
+      "id": "diag-1",
+      "module_id": "m1",
+      "level": 1,
+      "type": "mcq",
+      "prompt": "A host has 10.20.30.200/26. Which statement is true?",
+      "options": [
+        "The gateway must be within 10.20.30.192-10.20.30.254",
+        "The host cannot communicate because /26 is invalid for that range",
+        "The broadcast address is 10.20.30.255",
+        "The gateway must be 10.20.30.1 because that is the first address in the subnet"
+      ],
+      "answer": 0,
+      "explanation": "A /26 gives blocks of 64: 10.20.30.192/26 covers .192-.255, so the usable range is .193-.254 and the gateway must be inside it. 10.20.30.255 is the broadcast.",
+      "why_wrong": {
+        "3": "The gateway must be in the same subnet as the host, which for this host starts at .192.",
+        "1": "A /26 is perfectly valid inside a /24.",
+        "2": "For 10.20.30.200/26 the block is .192-.255, so .255 is the broadcast, but the statement about the gateway is the only fully correct one."
+      }
+    },
+    {
+      "id": "diag-2",
+      "module_id": "m1",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "Two hosts on the same switch are in 10.0.10.0/24 and 10.0.20.0/24 with no router. What happens when the first pings the second?",
+      "options": [
+        "The switch sends an ICMP redirect",
+        "ARP resolves the target and the ping succeeds",
+        "The ping fails: different subnets need a router even on the same switch",
+        "The ping succeeds because the switch forwards at Layer 2"
+      ],
+      "answer": 2,
+      "explanation": "The host decides the destination is off-link and ARPs for its gateway. With no gateway there is nothing to ARP for, so the ping fails before any frame reaches the other host.",
+      "why_wrong": {
+        "3": "The sender never sends to the other host's MAC, so switching is irrelevant.",
+        "0": "The host has no route, so no packet is generated for a redirect to apply to.",
+        "1": "ARP for the target is never attempted because the mask says it is off-link."
+      }
+    },
+    {
+      "id": "diag-3",
+      "module_id": "m2",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "A trunk carries VLANs 10 and 20 and the native VLAN is 1. An untagged frame arrives on the trunk. Which VLAN does it belong to?",
+      "options": [
+        "It is dropped",
+        "VLAN 1",
+        "VLAN 20",
+        "VLAN 10"
+      ],
+      "answer": 1,
+      "explanation": "Untagged frames on a trunk belong to the native VLAN. That is exactly why a native VLAN mismatch silently merges two VLANs.",
+      "why_wrong": {
+        "3": "Tagged frames carry their own VLAN id; only untagged traffic uses the native VLAN.",
+        "2": "Same reason.",
+        "0": "It is not dropped, it is assigned to the native VLAN — the security problem with mismatched natives."
+      }
+    },
+    {
+      "id": "diag-4",
+      "module_id": "m2",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "A switch floods a frame to every port in the VLAN. Which case is this?",
+      "options": [
+        "The source MAC is unknown",
+        "The destination MAC is in the MAC table on another port",
+        "The destination MAC is on the ingress port",
+        "The destination MAC is unknown or a broadcast"
+      ],
+      "answer": 3,
+      "explanation": "Flooding happens for broadcast, multicast and unknown unicast. Known unicast is forwarded to one port, and a destination on the ingress port is filtered.",
+      "why_wrong": {
+        "1": "That is a normal forward, not a flood.",
+        "2": "That case is filtered (dropped).",
+        "0": "An unknown source is learned, not a reason to flood."
+      }
+    },
+    {
+      "id": "diag-5",
+      "module_id": "m3",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "A client on VLAN 30 gets no DHCP address; the server is in another subnet. What is the most likely missing element?",
+      "options": [
+        "A longer lease time",
+        "A static route on the client",
+        "A DHCP relay (ip helper-address) on the VLAN 30 gateway",
+        "A second DHCP scope on the server"
+      ],
+      "answer": 2,
+      "explanation": "DHCP starts with a broadcast, which cannot cross a router. A relay converts it to unicast with giaddr so the server knows which scope to use.",
+      "why_wrong": {
+        "0": "Lease duration affects renewals, not whether the first DISCOVER reaches a server.",
+        "3": "The server needs a scope, but without a relay it never sees the request.",
+        "1": "The client has no address yet, so it cannot have a static route."
+      }
+    },
+    {
+      "id": "diag-6",
+      "module_id": "m3",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "dig returns status NXDOMAIN with an SOA in the authority section. What does that tell you?",
+      "options": [
+        "The name exists but has no record of that type",
+        "The queried name does not exist in the zone that answered",
+        "DNSSEC validation failed",
+        "The DNS server is unreachable"
+      ],
+      "answer": 1,
+      "explanation": "NXDOMAIN is authoritative absence, and the SOA identifies the zone plus the negative-caching TTL. NODATA (name exists, type does not) is a different case with NOERROR.",
+      "why_wrong": {
+        "3": "An unreachable server produces a timeout, not a response with an SOA.",
+        "0": "That is NODATA: NOERROR with an empty answer section.",
+        "2": "DNSSEC failures typically produce SERVFAIL."
+      }
+    },
+    {
+      "id": "diag-7",
+      "module_id": "m4",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "Small HTTP requests succeed instantly; a large upload hangs until timeout. Ping is clean. What do you test first?",
+      "options": [
+        "Whether the server's disk is full",
+        "Whether DNS resolution is slow",
+        "The TLS certificate expiry",
+        "A DF ping sweep to find the path MTU"
+      ],
+      "answer": 3,
+      "explanation": "Failures that scale with payload size are the MTU signature. ping -M do -s with increasing sizes finds the largest passing size.",
+      "why_wrong": {
+        "0": "Disk pressure would not correlate with request size while small requests succeed.",
+        "1": "A slow lookup affects the first request regardless of size.",
+        "2": "A certificate problem affects every request, not just large ones."
+      }
+    },
+    {
+      "id": "diag-8",
+      "module_id": "m4",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "A connection attempt returns an immediate 'connection refused'. What does that mean?",
+      "options": [
+        "The host actively rejected it — often nothing listening, or a firewall REJECT",
+        "A firewall is silently dropping the packets",
+        "The name could not be resolved",
+        "The route to the host is missing"
+      ],
+      "answer": 0,
+      "explanation": "A refusal is an active response: RST (nothing listening) or an ICMP administratively-prohibited (REJECT). DROP gives a timeout instead.",
+      "why_wrong": {
+        "1": "A silent DROP produces a timeout, which feels completely different.",
+        "3": "A missing route gives 'network unreachable', not a refusal.",
+        "2": "A resolution failure never reaches the TCP connection stage."
+      }
+    },
+    {
+      "id": "diag-9",
+      "module_id": "m5",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "A router has 10.0.0.0/8 via A (metric 10) and 10.1.0.0/16 via B (metric 200). Where does traffic to 10.1.5.5 go?",
+      "options": [
+        "Load-shared across both",
+        "Via A",
+        "Via B",
+        "Dropped"
+      ],
+      "answer": 2,
+      "explanation": "Longest prefix match compares prefix length before metric, so /16 beats /8 regardless of the worse metric.",
+      "why_wrong": {
+        "1": "That route only applies outside 10.1.0.0/16.",
+        "3": "A matching route exists.",
+        "0": "A single route is chosen per packet (ECMP requires equal prefixes and metrics)."
+      }
+    },
+    {
+      "id": "diag-10",
+      "module_id": "m5",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "A branch can ping HQ but HQ cannot ping the branch. The branch router's table is correct. What is the most likely cause?",
+      "options": [
+        "The branch link is down",
+        "The branch hosts have the wrong gateway",
+        "A duplex mismatch on the branch uplink",
+        "A missing return route for the branch subnet on the HQ side"
+      ],
+      "answer": 3,
+      "explanation": "One-way failure with a correct forward path is asymmetric routing: the far side has no route back to the source subnet.",
+      "why_wrong": {
+        "0": "Then the branch could not ping HQ either.",
+        "1": "Then the branch host could not send at all.",
+        "2": "A duplex mismatch degrades throughput but does not produce a clean one-way failure."
+      }
+    },
+    {
+      "id": "diag-11",
+      "module_id": "m6",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "A file is -rw-r----- root:app and the process runs as user app whose primary group is app. Can it read the file?",
+      "options": [
+        "Yes, but only if it is also in the root group",
+        "Yes — it is not the owner, so group bits apply and group has r",
+        "No — only the owner can read a 640 file",
+        "No — group app has no execute bit"
+      ],
+      "answer": 1,
+      "explanation": "Mode evaluation stops at the first matching class: owner, then group, then others. The process is in group app, which has r.",
+      "why_wrong": {
+        "2": "Group read is exactly what 640 grants.",
+        "3": "Execute is needed on directories, not to read a regular file.",
+        "0": "Group membership is what matters, and app is the group."
+      }
+    },
+    {
+      "id": "diag-12",
+      "module_id": "m6",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "EACCES persists after fixing the mode bits. ls -Z shows user_home_t for a file under /etc. What is the correct action?",
+      "options": [
+        "Relabel the path with restorecon (or an fcontext rule plus restorecon)",
+        "Run the service as root",
+        "Set SELinux to permissive",
+        "chmod 777 the file"
+      ],
+      "answer": 0,
+      "explanation": "SELinux is a second control. restorecon applies the policy's expected type to the path so the service domain is allowed to read it.",
+      "why_wrong": {
+        "3": "Mode bits are not the blocker and this weakens the system.",
+        "2": "Disables the control instead of fixing the label.",
+        "1": "Does not change the file's label and violates least privilege."
+      }
+    },
+    {
+      "id": "diag-13",
+      "module_id": "m7",
+      "level": 3,
+      "type": "mcq",
+      "prompt": "Load average is 40, CPU utilisation is 6%, and iowait is 88%. What is the most likely explanation?",
+      "options": [
+        "There is a memory leak",
+        "The CPU is oversubscribed and needs more cores",
+        "The load average is wrong",
+        "Many tasks are blocked in uninterruptible IO waits, not competing for CPU"
+      ],
+      "answer": 3,
+      "explanation": "Load counts runnable plus uninterruptible tasks. High load with low CPU and high iowait means tasks are blocked in the kernel, typically on storage or a network filesystem.",
+      "why_wrong": {
+        "1": "CPU is mostly idle; more cores would not help.",
+        "0": "A leak would show in memory and possibly OOM messages, not iowait.",
+        "2": "The metric is behaving exactly as documented."
+      }
+    },
+    {
+      "id": "diag-14",
+      "module_id": "m7",
+      "level": 2,
+      "type": "mcq",
+      "prompt": "A process is in state D and does not die after kill -9. Why?",
+      "options": [
+        "The PID was reused",
+        "SIGKILL requires root",
+        "It is blocked in an uninterruptible kernel wait, so signals are not delivered until the wait ends",
+        "systemd restarts it immediately"
+      ],
+      "answer": 2,
+      "explanation": "Signals are handled on return to user space. A task in D state cannot return until the kernel operation completes, so the signal stays pending.",
+      "why_wrong": {
+        "1": "SIGKILL is not privilege-gated beyond normal signal permission.",
+        "0": "A reused PID would show a different process, usually in S or R.",
+        "3": "A restart would appear as a new PID, not the same one still in D."
+      }
+    }
+  ],
+  "plan_rules": {
+    "strong_threshold": 75,
+    "note": "Modules at or above the threshold are marked optional revision. Everything below becomes part of the plan, ordered by weight and accelerated mode."
+  }
+}

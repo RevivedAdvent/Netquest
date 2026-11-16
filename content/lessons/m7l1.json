@@ -1,0 +1,94 @@
+{
+  "id": "m7l1",
+  "module_id": "m7",
+  "title": "Processes, states and signals",
+  "minutes": 18,
+  "summary": "What a process actually is in Linux, how states reveal what it is waiting on, and which signal to send.",
+  "sections": [
+    {
+      "heading": "A process is more than a running program",
+      "html": "<p>A process is an isolated execution context: its own virtual address space, file descriptor table, credentials (UID/GID), signal handlers, cwd, environment and CPU state. The kernel identifies it by PID; the parent by PPID. PIDs are recycled, so a PID alone is not a stable identity — pair it with start time when you write anything down.</p><p>Threads share the address space and are scheduled individually, which is why <code>top -H</code> can show several 100% threads inside one process. Containers are not separate kernels: they are processes with namespaces and cgroups, so <code>ps</code> inside a container shows a subset of the host's processes.</p>"
+    },
+    {
+      "heading": "States, and what to do about each",
+      "html": "<table><tr><th>State (ps STAT)</th><th>Meaning</th><th>Practical response</th></tr><tr><td><code>R</code></td><td>Running or runnable</td><td>Normal under load; excessive means CPU contention</td></tr><tr><td><code>S</code></td><td>Interruptible sleep</td><td>Normal: waiting on IO, timer or socket</td></tr><tr><td><code>D</code></td><td>Uninterruptible sleep (usually IO)</td><td>Cannot be killed, even with -9, until the IO completes — a strong signal of storage problems</td></tr><tr><td><code>Z</code></td><td>Zombie (defunct)</td><td>The child has exited; the parent has not reaped it. A bug in the parent, not the child</td></tr><tr><td><code>T</code></td><td>Stopped (job control or SIGSTOP)</td><td><code>kill -CONT</code> resumes</td></tr><tr><td><code>I</code></td><td>Idle kernel thread</td><td>Ignore</td></tr></table><p>Two interview favourites: a <code>D</code> state process ignoring <code>kill -9</code> (it is waiting in the kernel, so no signal is delivered until the syscall returns), and a zombie (unreapable but harmless in small numbers — it consumes only a PID until the parent exits or calls <code>wait()</code>).</p>"
+    },
+    {
+      "heading": "Signals you must know",
+      "html": "<table><tr><th>Signal</th><th>Number</th><th>Meaning</th></tr><tr><td>SIGHUP</td><td>1</td><td>Hangup; conventionally 'reload configuration'</td></tr><tr><td>SIGINT</td><td>2</td><td>Ctrl-C</td></tr><tr><td>SIGKILL</td><td>9</td><td>Uncatchable, immediate termination</td></tr><tr><td>SIGTERM</td><td>15</td><td>Polite termination request (the default for <code>kill</code>)</td></tr><tr><td>SIGSTOP / SIGCONT</td><td>19 / 18</td><td>Pause / resume (SIGSTOP is uncatchable)</td></tr><tr><td>SIGUSR1/2</td><td>10 / 12</td><td>Application-defined</td></tr></table><p><strong>Why SIGTERM first:</strong> it lets the process flush buffers, release locks, close database connections and remove its PID file. SIGKILL offers no such thing: you get an unclean shutdown, possibly corrupt state, orphaned locks and leaked temp files. The professional sequence is TERM, wait a few seconds, check, then KILL only if it is still there.</p><pre><span class='c'># graceful</span>kill 4242<span class='c'># give it time, then check</span>sleep 5; ps -p 4242 && kill -9 4242</pre>"
+    },
+    {
+      "heading": "Nice and priority",
+      "html": "<p>Nice values run from -20 (highest priority) to 19 (lowest). Ordinary users can only <em>increase</em> niceness (lower priority); raising priority requires root or <code>CAP_SYS_NICE</code>.</p><pre>nice -n 10 ./batch-job.sh       <span class='c'># start lower priority</span>renice -n 15 -p 4242            <span class='c'># adjust a running process</span>ionice -c3 -p 4242              <span class='c'># also deprioritise its IO (often the real bottleneck)</span></pre><p>Nice affects CPU scheduling only. A process waiting on disk is not helped by renicing — <code>ionice</code> and fixing the storage path are.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m7l1-1",
+      "type": "mcq",
+      "prompt": "A process is in state D and does not die even with `kill -9`. Why?",
+      "options": [
+        "It has SIGKILL masked",
+        "It is a zombie",
+        "It is running as root",
+        "It is blocked in an uninterruptible kernel sleep (usually IO) and cannot process signals until the syscall returns"
+      ],
+      "answer": 3,
+      "explanation": "Signals are only delivered when the process returns to user space. A task stuck in D is waiting in the kernel, so nothing is delivered.",
+      "why_wrong": {
+        "1": "Zombies have already exited.",
+        "0": "SIGKILL cannot be blocked.",
+        "2": "Root is irrelevant; even root cannot kill an uninterruptible sleep."
+      },
+      "concepts": [
+        "process states",
+        "signals"
+      ]
+    },
+    {
+      "id": "q-m7l1-2",
+      "type": "mcq",
+      "prompt": "Why prefer SIGTERM over SIGKILL?",
+      "options": [
+        "SIGTERM is the only signal that works on daemons",
+        "SIGTERM allows the process to clean up before exiting",
+        "SIGTERM is faster",
+        "SIGKILL requires root"
+      ],
+      "answer": 1,
+      "explanation": "SIGTERM is catchable, so applications can flush data, close connections and remove lock files. SIGKILL skips all of it.",
+      "why_wrong": {
+        "2": "Speed is not the point; correctness is.",
+        "3": "Both need permission to signal the process, not necessarily root.",
+        "0": "SIGKILL works on daemons too — destructively."
+      },
+      "concepts": [
+        "SIGTERM vs SIGKILL"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Permissions",
+      "text": "You can only signal processes whose UID matches yours (or as root) — the same ownership model."
+    },
+    {
+      "title": "Services",
+      "text": "systemd sends SIGTERM and escalates according to TimeoutStopSec; knowing this explains slow restarts."
+    },
+    {
+      "title": "Case study 9",
+      "text": "A refused port often ends with 'the process is not running' — this lesson is how you confirm it."
+    }
+  ],
+  "interview": [
+    {
+      "q": "What is the difference between a zombie process and an orphan process?",
+      "a": "A zombie has exited but its parent has not reaped it, so its entry remains until the parent calls wait() or exits. An orphan is a running process whose parent died; it is reparented to init/systemd and continues normally."
+    },
+    {
+      "q": "What does nice do?",
+      "a": "It adjusts CPU scheduling priority from -20 (highest) to 19 (lowest). It affects CPU contention only, not IO, so it will not fix a process blocked on disk."
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "id": "m1l1",
+  "module_id": "m1",
+  "title": "IPv4, masks and CIDR without the hand-waving",
+  "minutes": 14,
+  "summary": "An IPv4 address is 32 bits that mean nothing without a mask. This lesson rebuilds the machine-level view: why the mask exists, what ANDing does, and what 'network address' really is.",
+  "sections": [
+    {
+      "heading": "An address alone is incomplete",
+      "html": "<p>An IPv4 address is a 32-bit integer written as four decimal octets: <code>192.168.10.130</code> is <code>11000000 10101000 00001010 10000010</code>. On its own that number tells a host <em>which host</em> it is, but not <em>which network</em> it belongs to.</p><p>That second piece comes from the prefix length (mask). The pair is the real configuration unit. A host that knows its address but not its mask cannot decide whether a destination is on-link, so it cannot decide between ARP and the gateway.</p><div class='note'><b>Mental model:</b> the mask is a stencil. It covers the network bits and exposes the host bits. Everything the host decides locally — ARP versus gateway, what to accept as on-link, what counts as broadcast — follows from that stencil.</div><p>The mask is a contiguous run of 1 bits from the left. <code>/26</code> means 26 ones followed by 6 zeros: <code>255.255.255.192</code>. Non-contiguous masks (e.g. <code>255.0.255.0</code>) are not valid for normal IPv4 routing.</p>"
+    },
+    {
+      "heading": "What the host actually computes",
+      "html": "<p>Before a packet leaves, the host performs a bitwise AND of <em>its own address</em> and <em>its own mask</em>, and compares that to the AND of <em>the destination</em> and the same mask:</p><pre><span class='c'># host: 192.168.10.130/26</span><span class='k'>mine</span>      192.168.10.130  AND  255.255.255.192  =  192.168.10.128<span class='k'>destination</span> 192.168.10.190  AND  255.255.255.192  =  192.168.10.128  <span class='g'>// equal -&gt; on-link</span><span class='k'>destination</span> 192.168.10.200  AND  255.255.255.192  =  192.168.10.192  <span class='g'>// different -&gt; gateway</span></pre><p>Two consequences that are easy to miss:</p><ul><li>The comparison is done with the <em>sender's</em> mask. The receiver's mask is irrelevant to the sender's decision, which is why asymmetric mask mistakes produce one-way failures.</li><li>The host never asks a router whether a destination is local. If its own mask says local, it ARPs; if the ARP fails, the packet is dropped — it does not fall back to the gateway.</li></ul>"
+    },
+    {
+      "heading": "Network, broadcast, and the addresses you can actually use",
+      "html": "<p>For any prefix, three numbers matter: the first address (network), the last address (broadcast), and the range in between (hosts).</p><table><tr><th>Prefix</th><th>Block size</th><th>Example</th><th>Network</th><th>Usable</th><th>Broadcast</th></tr><tr><td class='mono'>/24</td><td>256</td><td class='mono'>10.0.5.37</td><td class='mono'>10.0.5.0</td><td class='mono'>.1-.254</td><td class='mono'>10.0.5.255</td></tr><tr><td class='mono'>/26</td><td>64</td><td class='mono'>10.0.5.130</td><td class='mono'>10.0.5.128</td><td class='mono'>.129-.190</td><td class='mono'>10.0.5.191</td></tr><tr><td class='mono'>/30</td><td>4</td><td class='mono'>10.0.5.6</td><td class='mono'>10.0.5.4</td><td class='mono'>.5-.6</td><td class='mono'>10.0.5.7</td></tr><tr><td class='mono'>/31</td><td>2</td><td class='mono'>10.0.5.6</td><td class='mono'>10.0.5.6</td><td class='mono'>point-to-point</td><td class='mono'>n/a</td></tr></table><p><code>/31</code> is legitimate on point-to-point links (RFC 3021) and <code>/32</code> is a single host (loopback, host routes, anycast). Interviews sometimes use these to test whether you treat the rule as arithmetic or as scripture.</p>"
+    },
+    {
+      "heading": "Why the gateway is a separate field",
+      "html": "<p>The gateway is not derived from the address and mask. It is an explicit configuration value that must be (a) inside one of your on-link prefixes and (b) actually a router that will forward for you. A default route <code>0.0.0.0/0 via 192.168.10.1</code> is useless if the host cannot ARP for 192.168.10.1 — and it cannot if 192.168.10.1 is outside the host's mask.</p><p>This is the single most common 'the network is broken' configuration bug in labs: a /24 address with a gateway from a different /24. The host looks fine, the gateway looks fine, and nothing works.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m1l1-1",
+      "type": "mcq",
+      "prompt": "How many usable host addresses does a /27 provide?",
+      "options": [
+        "14",
+        "30",
+        "62",
+        "32"
+      ],
+      "answer": 1,
+      "explanation": "A /27 has 5 host bits, so 2^5 = 32 addresses, minus network and broadcast = 30 usable.",
+      "why_wrong": {
+        "0": "That is 2^4-2, i.e. a /28.",
+        "3": "You counted the network and broadcast addresses as usable.",
+        "2": "That is 2^6-2, i.e. a /26."
+      },
+      "concepts": [
+        "CIDR arithmetic"
+      ]
+    },
+    {
+      "id": "q-m1l1-2",
+      "type": "self",
+      "prompt": "A colleague says 'the mask does not matter, the router handles everything'. Correct them in two or three sentences, using a concrete consequence.",
+      "checklist": [
+        {
+          "text": "The mask defines the local on-link prefix, so it changes the host's forwarding decision.",
+          "weight": 2
+        },
+        {
+          "text": "A wrong mask makes the host ARP for off-link addresses (or send on-link traffic to the gateway) — either way traffic fails.",
+          "weight": 2
+        },
+        {
+          "text": "The router never sees packets the host drops because ARP failed.",
+          "weight": 1
+        },
+        {
+          "text": "Mask errors are visible with ip route / ip neigh, so they are diagnosable, not theoretical.",
+          "weight": 1
+        }
+      ],
+      "reference": "<p>The mask is part of the forwarding decision, not decoration. A host ANDs its own address and the destination with its mask to decide on-link vs gateway. If the mask is too wide, traffic that should go to the router is ARP'd on the local segment instead; the ARP fails, the packet is dropped, and the router never sees it. If the mask is too narrow, on-link traffic is unnecessarily sent to the gateway, which may drop it. <code>ip route</code> reveals the prefix the host believes it owns, and <code>ip neigh</code> reveals the failed resolution.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "subnet mask",
+        "forwarding decision"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Switching",
+      "text": "The mask decides that a frame must go to the gateway's MAC, but the switch is what learns that MAC and forwards the frame. Change the mask and you change which MAC the host ARPs for."
+    },
+    {
+      "title": "DHCP",
+      "text": "DHCP hands out address, mask and gateway together. A bad option 1 (mask) in a scope reproduces this entire lesson's failure across every client at once."
+    },
+    {
+      "title": "Routing",
+      "text": "The kernel installs a directly connected route from the address/mask pair. That route is what the routing table uses for the on-link decision."
+    }
+  ],
+  "interview": [
+    {
+      "q": "Walk me through how a host decides where to send a packet.",
+      "a": "Look up the destination in the routing table; the most specific matching prefix decides. If the match is a directly connected route, ARP/NDP for the destination and send the frame to that MAC. Otherwise use the route's next hop, ARP/NDP for the next hop, and send the frame to the router's MAC with the original destination IP."
+    },
+    {
+      "q": "Why does /31 exist?",
+      "a": "Point-to-point links need at most two endpoints. RFC 3021 allows /31 to use both addresses, saving two addresses per link — useful for router-to-router links where a /30 would waste two."
+    }
+  ]
+}

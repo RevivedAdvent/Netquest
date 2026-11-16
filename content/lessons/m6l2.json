@@ -1,0 +1,118 @@
+{
+  "id": "m6l2",
+  "module_id": "m6",
+  "title": "Permissions, ownership and the traversal trap",
+  "minutes": 20,
+  "summary": "Modes, ownership, directory semantics, and the exact evaluation order the kernel uses when deciding whether you may do something.",
+  "sections": [
+    {
+      "heading": "Reading a mode string",
+      "html": "<pre>-rwxr-x--- 1 alice developers  4096 Nov 17 10:00 deploy.sh</pre><table><tr><th>Position</th><th>Meaning</th></tr><tr><td>1</td><td>Type: <code>-</code> file, <code>d</code> directory, <code>l</code> symlink, <code>c</code>/<code>b</code> device, <code>s</code> socket, <code>p</code> FIFO</td></tr><tr><td>2-4</td><td>Owner (user) permissions</td></tr><tr><td>5-7</td><td>Group permissions</td></tr><tr><td>8-10</td><td>Others permissions</td></tr></table><p>For files: <code>r</code> read, <code>w</code> modify, <code>x</code> execute. For directories the meaning changes, which is the single most common source of confusion:</p><table><tr><th>Bit on a directory</th><th>Means</th></tr><tr><td><code>r</code></td><td>You may <em>list</em> names in it (<code>ls</code>)</td></tr><tr><td><code>w</code></td><td>You may create, delete or rename entries in it</td></tr><tr><td><code>x</code></td><td>You may <em>traverse</em> it: access entries by name, cd into it, stat files inside</td></tr></table><p>A directory with <code>r--</code> lets you list names but not open anything. A directory with <code>--x</code> lets you open files whose names you already know but not list them. A file's own permissions are useless if any parent directory lacks <code>x</code> for you.</p>"
+    },
+    {
+      "heading": "The exact evaluation order",
+      "html": "<p>When a process opens a file, the kernel picks <em>one</em> set of permission bits, not the union:</p><ol class='steps'><li>If the process's effective UID is the file's owner — use the owner bits. Done.</li><li>Else if the process's effective GID or any supplementary GID matches the file's group — use the group bits. Done.</li><li>Else use the others bits.</li><li>Root (uid 0) bypasses the check entirely, except for execute on a file with no execute bits at all.</li></ol><p>This ordering explains two famous confusions:</p><ul><li>A user in the group who is also the owner gets owner bits, which may be <em>worse</em> than group bits.</li><li>Adding a user to a group does not change existing processes; they keep the old credentials until they restart. This is why 'I added the group and it still fails' is so common — and why <code>newgrp</code> or a service restart is needed.</li></ul>"
+    },
+    {
+      "heading": "chmod, chown, and symbolic versus octal",
+      "html": "<pre><span class='c'># octal</span>chmod 640 app.conf            <span class='c'># rw-r-----</span>chmod 750 bin/                <span class='c'># rwxr-x---</span><span class='c'># symbolic, relative (safer for one bit)</span>chmod u+x deploy.sh\nchmod g-w secret.txt\nchmod o-rwx private/\nchmod +X -R releases/         <span class='c'># capital X: add x only to dirs and already-executable files</span><span class='c'># ownership</span>chown root:myapp app.conf\nchown -R myapp:myapp /var/lib/myapp\n<span class='c'># special bits</span>chmod u+s /usr/bin/passwd     <span class='c'># setuid: runs as file owner</span>chmod g+s /shared/project     <span class='c'># setgid on dir: new files inherit the group</span>chmod +t /tmp                 <span class='c'># sticky: only owners can delete their files (normal on /tmp)</span></pre><p>Use <code>chmod +X</code> (capital) when recursively fixing a source tree: it adds execute only where it already makes sense, avoiding the classic mistake of making every config file executable.</p>"
+    },
+    {
+      "heading": "umask and default permissions",
+      "html": "<p>New files start at 666 and new directories at 777, then the umask <em>removes</em> bits:</p><table><tr><th>umask</th><th>New file</th><th>New directory</th></tr><tr><td>022 (typical)</td><td>644 (<code>rw-r--r--</code>)</td><td>755 (<code>rwxr-xr-x</code>)</td></tr><tr><td>027</td><td>640</td><td>750</td></tr><tr><td>077</td><td>600</td><td>700</td></tr></table><p>umask is inherited from the process that creates the file, which is the important bit: a service started by systemd uses the umask configured in its unit file (<code>UMask=0027</code>), not yours. Setting a restrictive umask is a cheap, effective hardening measure for anything that writes secrets or application data.</p>"
+    },
+    {
+      "heading": "ACLs, attributes and SELinux: layers above the mode",
+      "html": "<p>When the mode looks correct and access still fails, there are three more layers:</p><ul><li><strong>POSIX ACLs</strong> — <code>getfacl file</code> shows per-user and per-group entries beyond the three classes. A single <code>setfacl -m u:bob:r--</code> can grant access the mode string does not show. Always run <code>getfacl</code> before concluding permissions are the issue.</li><li><strong>File attributes</strong> — <code>lsattr</code> shows immutable (<code>i</code>) and append-only (<code>a</code>). An immutable file cannot be written even by root without clearing the flag.</li><li><strong>SELinux</strong> — Fedora's default MAC layer. The mode can be perfect and SELinux can still deny the access, because the process's domain has no rule allowing it on that file's type. Diagnose with <code>ls -Z</code>, <code>ausearch -m AVC -ts recent</code> or <code>audit2why</code>. The boot-time relabel (<code>/.autorelabel</code>) and <code>restorecon</code> fix the common case of a file created with the wrong context by being copied from <code>/root</code> to <code>/var/www</code>.</li></ul><p>Note the deliberate inclusion of SELinux here: Fedora enforces it by default, and 'permission denied' on Fedora frequently has nothing to do with the mode bits.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m6l2-1",
+      "type": "mcq",
+      "prompt": "A directory is mode 744 owned by root:root. User bob (not root, not in group root) can list it but cannot open a file inside. Why?",
+      "options": [
+        "The directory must be mode 755 for reading",
+        "bob needs sudo for all reads",
+        "The file's own mode blocks it",
+        "Others have r but not x, so traversal is denied"
+      ],
+      "answer": 3,
+      "explanation": "744 gives others r--. Listing requires r, but accessing any entry inside requires x on the directory.",
+      "why_wrong": {
+        "2": "The file may be world-readable; the directory blocks the lookup.",
+        "0": "755 is common but not required for reading; x is the requirement here.",
+        "1": "sudo bypasses, but the cause is the missing traversal bit."
+      },
+      "concepts": [
+        "directory traversal"
+      ]
+    },
+    {
+      "id": "q-m6l2-2",
+      "type": "mcq",
+      "prompt": "What does the kernel do when the process's UID matches the file owner AND its GID matches the file group?",
+      "options": [
+        "Applies the owner bits only",
+        "Applies the union of owner and group bits",
+        "Requires both to grant access",
+        "Applies the group bits only"
+      ],
+      "answer": 0,
+      "explanation": "Owner bits are evaluated first and exclusively; group bits are only consulted when the UID does not match.",
+      "why_wrong": {
+        "1": "Permissions are not a union across classes.",
+        "3": "Group bits apply only when the owner check does not match.",
+        "2": "One class applies, not both."
+      },
+      "concepts": [
+        "permission evaluation order"
+      ]
+    },
+    {
+      "id": "q-m6l2-3",
+      "type": "mcq",
+      "prompt": "With umask 027, what mode does a newly created regular file get?",
+      "options": [
+        "660",
+        "600",
+        "640",
+        "666"
+      ],
+      "answer": 2,
+      "explanation": "666 - 027 = 640 (rw-r-----). umask removes bits from the 666 base for files.",
+      "why_wrong": {
+        "1": "That would be umask 077.",
+        "0": "That would allow group write, which 027 removes.",
+        "3": "That is umask 000."
+      },
+      "concepts": [
+        "umask"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Processes",
+      "text": "The effective UID/GID of the process decides everything here, and a service's identity is defined in its unit file."
+    },
+    {
+      "title": "Logs",
+      "text": "SELinux denials appear in the audit log, not in the application's log — you have to know where to look."
+    },
+    {
+      "title": "Case study 10",
+      "text": "The permission mission combines directory traversal, group membership and SELinux."
+    }
+  ],
+  "interview": [
+    {
+      "q": "Why does a directory need execute permission?",
+      "a": "Because execute on a directory means 'traverse': the right to resolve a name inside it to an inode. Without it you cannot open files even if you can list them, and you cannot cd into it."
+    },
+    {
+      "q": "A service cannot read a file but the mode looks fine. What else do you check?",
+      "a": "The process identity and its supplementary groups, every parent directory's traversal bit, POSIX ACLs with getfacl, file attributes with lsattr, and SELinux denials in the audit log. On Fedora, SELinux is a frequent and invisible cause."
+    }
+  ]
+}

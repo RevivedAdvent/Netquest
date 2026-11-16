@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}How It All Connects — NetQuest{% endblock %}
+{% block crumb %}Study / How It All Connects{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap-wide">
+  <div class="eyebrow">Systems thinking</div>
+  <h1 class="mt0">How It All Connects</h1>
+  <p class="lead" style="max-width:780px">Each module teaches a layer. These journeys walk the layers in order, end to end, so the pieces stop being separate facts. If you can narrate one of these from memory and say which step fails when a symptom appears, you can hold an interview conversation about it.</p>
+
+  <div class="grid grid-2">
+    {% for j in journeys %}
+    <div class="card">
+      <div class="eyebrow">{% for mid in j.module_ids %}{{ mid }}{% if not loop.last %} &middot; {% endif %}{% endfor %} &middot; {{ j.minutes }} min</div>
+      <h2 class="mt0" style="font-size:19px"><a href="/connections/{{ j.id }}">{{ j.title }}</a></h2>
+      <p class="small">{{ j.summary | truncate(190) }}</p>
+      <div class="pill-row">
+        {% for l in j.layers %}<span class="badge mono">{{ l }}</span>{% endfor %}
+      </div>
+      <div class="mt16"><a class="btn small" href="/connections/{{ j.id }}">Walk the journey &rarr;</a></div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card tight">
+    <div class="card-title"><h3 class="mt0">How to use these</h3></div>
+    <p class="small mb0">Read one journey before an interview rather than re-reading a lesson. Then close it and re-draw the steps on paper. The breakpoint table at the end of each journey is the part interviewers actually test: "what would you check first?"</p>
+  </div>
+</div>
+{% endblock %}

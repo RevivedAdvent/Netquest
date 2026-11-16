@@ -1,0 +1,120 @@
+{
+  "id": "m7",
+  "number": 7,
+  "title": "Linux Process Management",
+  "tagline": "Find the process, understand it, stop it correctly.",
+  "priority": "secondary",
+  "weight": 1.0,
+  "estimated_minutes": 75,
+  "summary": "Processes, states, signals and systemd. Why SIGTERM before SIGKILL, how to investigate high CPU, and how to diagnose a failed service from its logs.",
+  "objectives": [
+    "Explain PID, PPID and process states, and read them from ps/top.",
+    "Choose between SIGTERM and SIGKILL and explain the consequences.",
+    "Understand nice values and priorities.",
+    "Investigate high CPU or memory usage methodically.",
+    "Diagnose a failed systemd service using systemctl and journalctl.",
+    "Explain the difference between a service and a process."
+  ],
+  "key_questions": [
+    "Why is SIGTERM preferable to SIGKILL?",
+    "A service failed to start. What are your first two commands?",
+    "How do you investigate a process using 100% CPU?",
+    "What is the difference between a process and a service?",
+    "What does a zombie process indicate?"
+  ],
+  "lesson_ids": [
+    "m7l1",
+    "m7l2"
+  ],
+  "lab_ids": [
+    "ps",
+    "kill",
+    "systemctl",
+    "journalctl"
+  ],
+  "mission_ids": [
+    "case09"
+  ],
+  "assessment": [
+    {
+      "id": "q-m7a-1",
+      "type": "mcq",
+      "prompt": "What happens when a process receives SIGTERM?",
+      "options": [
+        "It is sent to the foreground",
+        "It is asked to terminate and may clean up and exit voluntarily",
+        "The kernel kills it immediately",
+        "It is paused until resumed"
+      ],
+      "answer": 1,
+      "explanation": "SIGTERM is a request that the default handler exits on, but applications may catch it to flush state and close connections.",
+      "why_wrong": {
+        "2": "That is SIGKILL.",
+        "3": "That is SIGSTOP/SIGTSTP.",
+        "0": "That is SIGCONT plus a terminal job control action."
+      },
+      "concepts": [
+        "signals",
+        "SIGTERM"
+      ]
+    },
+    {
+      "id": "q-m7a-2",
+      "type": "mcq",
+      "prompt": "A service unit is in state 'failed'. Which two commands give you the reason?",
+      "options": [
+        "ps aux and top",
+        "dmesg and who",
+        "ss -ltnp and ip route",
+        "systemctl status myapp and journalctl -u myapp -n 50"
+      ],
+      "answer": 3,
+      "explanation": "status shows the exit code and recent log lines; journalctl -u shows the unit's full log. Together they usually contain the actual error.",
+      "why_wrong": {
+        "0": "Both show processes, not why a unit failed to start.",
+        "2": "Relevant for listeners and routing, not unit startup errors.",
+        "1": "dmesg is kernel ring buffer; who shows logged-in users."
+      },
+      "concepts": [
+        "systemctl",
+        "journalctl"
+      ]
+    },
+    {
+      "id": "q-m7a-3",
+      "type": "self",
+      "prompt": "Explain how you would investigate a Linux server where the web application has become slow and one process is at 400% CPU.",
+      "checklist": [
+        {
+          "text": "Identify the process and its owner with ps/top/pgrep before acting.",
+          "weight": 2
+        },
+        {
+          "text": "Check per-thread CPU usage and what the process is doing (top -H, pidstat, /proc/PID/status).",
+          "weight": 1
+        },
+        {
+          "text": "Check the process's file descriptors, connections and logs for the cause (ss -tp, /proc/PID/fd, journalctl).",
+          "weight": 2
+        },
+        {
+          "text": "Consider load average vs CPU count, memory pressure and swap, and IO wait rather than assuming CPU alone.",
+          "weight": 2
+        },
+        {
+          "text": "Prefer graceful mitigation (reload, rotate, restart via systemctl) over kill -9.",
+          "weight": 2
+        },
+        {
+          "text": "Verify the fix and monitor afterwards.",
+          "weight": 1
+        }
+      ],
+      "reference": "<p>Identify first: <code>ps -eo pid,ppid,user,pcpu,pmem,cmd --sort=-pcpu | head</code> or <code>top -H</code> for threads. 400% on a multi-core box means it is genuinely parallel, not necessarily runaway. Then determine what it is doing: <code>cat /proc/PID/status</code>, <code>ss -tp</code> for its connections, <code>ls /proc/PID/fd | wc -l</code> for descriptor growth, and its own logs. Check system context too — load average relative to core count, memory pressure and swap, iowait in <code>vmstat 1</code> — because high CPU often accompanies IO or connection storms. Mitigate gracefully: reload the service, restart via systemd so the unit's stop signal and timeouts apply. Reserve <code>kill -9</code> for a process that ignores SIGTERM, knowing you lose its cleanup. Verify by watching CPU and error rates after the change.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "process investigation"
+      ]
+    }
+  ]
+}

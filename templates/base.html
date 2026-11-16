@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}NetQuest{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="layout">
+
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">NQ</div>
+      <div>
+        <div class="brand-name">NetQuest</div>
+        <div class="brand-sub">Network Engineering Lab</div>
+      </div>
+    </div>
+
+    <nav class="nav-group">
+      <div class="nav-label">Study</div>
+      <a class="nav-item {{ 'active' if request.endpoint == 'dashboard.index' }}" href="/">Dashboard</a>
+      <a class="nav-item {{ 'active' if request.blueprint == 'learning' }}" href="/learn">Learn</a>
+      <a class="nav-item {{ 'active' if request.endpoint == 'learning.connections' }}" href="/connections">How It All Connects</a>
+    </nav>
+
+    <nav class="nav-group">
+      <div class="nav-label">Practise</div>
+      <a class="nav-item {{ 'active' if request.blueprint == 'simulations' }}" href="/simulations">Simulations</a>
+      <a class="nav-item {{ 'active' if request.blueprint == 'labs' }}" href="/labs">Command Labs</a>
+      <a class="nav-item {{ 'active' if request.blueprint == 'missions' }}" href="/missions">Troubleshooting</a>
+    </nav>
+
+    <nav class="nav-group">
+      <div class="nav-label">Assess</div>
+      <a class="nav-item {{ 'active' if request.blueprint == 'interview' }}" href="/interview">Mock Interview</a>
+      <a class="nav-item {{ 'active' if request.endpoint == 'progress.revision' }}" href="/revision">Revision</a>
+      <a class="nav-item {{ 'active' if request.endpoint == 'progress.stats' }}" href="/progress">Progress</a>
+    </nav>
+
+    <nav class="nav-group">
+      <div class="nav-label">System</div>
+      <a class="nav-item {{ 'active' if request.blueprint == 'settings' }}" href="/settings">Settings</a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div>{{ rank_info.rank }}</div>
+      <div><b>{{ rank_info.xp }}</b> XP &middot; local only</div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="menu-btn" id="menuBtn" aria-label="Toggle navigation">&#9776; Menu</button>
+      <div class="crumb">{% block crumb %}Dashboard{% endblock %}</div>
+      <div class="spacer"></div>
+      <div class="topbar-stat optional"><span>Mastery</span> <b>{% block mastery_pct %}—{% endblock %}</b></div>
+      <div class="topbar-stat optional"><span>Interview in</span> <b>{{ days_remaining }}d</b></div>
+      <div class="topbar-stat"><span>XP</span> <b>{{ rank_info.xp }}</b></div>
+    </header>
+
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

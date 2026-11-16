@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Revision — NetQuest{% endblock %}
+{% block crumb %}Assess / Revision{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap-wide">
+  <div class="eyebrow">{{ bank.quizzes | length }} drill sets &middot; {{ bank.quizzes | map(attribute='questions') | map('length') | sum }} questions</div>
+  <h1 class="mt0">Revision</h1>
+  <p class="lead" style="max-width:800px">{{ bank.intro }}</p>
+
+  {% if weak %}
+  <div class="card">
+    <div class="card-title"><h3 class="mt0">Your weakest recorded answers</h3><span class="badge warn">fix these first</span></div>
+    <p class="small">These are questions you have answered before and scored below 75% on. Re-read the lesson, then come back and answer again — the score only counts your best attempt, so there is no downside to retrying.</p>
+    {% for w in weak[:10] %}
+    <div class="split" style="padding:7px 0; border-bottom:1px solid #262626">
+      <div style="min-width:0">
+        <a href="{{ w.href }}" class="small" style="color:#e8e8e8">{{ w.prompt | truncate(92) }}</a>
+        <div class="small muted">{{ w.module_title }} &middot; {{ w.tries }} attempt{{ '' if w.tries == 1 else 's' }}</div>
+      </div>
+      <span class="badge mono">{{ w.best }}%</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% for quiz in bank.quizzes %}
+  <div class="card">
+    <div class="card-title">
+      <h2 class="mt0" style="font-size:19px">{{ quiz.title }}</h2>
+      <span class="badge mono">{{ quiz.questions | length }} questions &middot; {{ quiz.module_ids | join(', ') }}</span>
+    </div>
+    {% for q in quiz.questions %}
+    <div class="check-block" data-qid="{{ q.id }}" data-type="mcq">
+      <div class="qhead"><span class="small">Q{{ loop.index }}</span></div>
+      <div class="qtext">{{ q.prompt }}</div>
+      {% for opt in q.options %}
+      <label class="option"><input type="radio" name="{{ q.id }}" value="{{ loop.index0 }}"><span>{{ opt }}</span></label>
+      {% endfor %}
+      <div class="btn-row mt8"><button class="btn small rev-check" type="button" data-qid="{{ q.id }}">Check</button></div>
+      <div class="fb"></div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+  document.querySelectorAll(".rev-check").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var qid = btn.getAttribute("data-qid");
+      var block = btn.closest(".check-block");
+      var answer = -1;
+      block.querySelectorAll("input[type=radio]").forEach(function (n) { if (n.checked) answer = +n.value; });
+      if (answer === -1) { NetQuest.toast("Pick an answer first"); return; }
+      btn.disabled = true;
+      NetQuest.post("/api/revision/quiz", { question_id: qid, answer: answer })
+        .then(function (data) {
+          var r = data.result;
+          block.querySelectorAll(".option").forEach(function (opt) {
+            var v = +opt.querySelector("input").value;
+            if (v === answer && !r.correct) opt.classList.add("incorrect");
+          });
+          block.querySelector(".fb").innerHTML =
+            '<div class="feedback ' + (r.correct ? "ok" : "bad") + '"><h4>' +
+            (r.correct ? "Correct" : "Not quite") + "</h4><div>" +
+            NetQuest.escape(r.feedback) + "</div></div>";
+          if (data.xp) {
+            document.querySelectorAll(".js-xp").forEach(function (n) { n.textContent = data.xp.xp; });
+          }
+          btn.textContent = "Checked";
+        })
+        .catch(function (e) {
+          NetQuest.toast(e.message);
+          btn.disabled = false;
+        });
+    });
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,334 @@
+{
+  "hosts": [
+    {
+      "name": "laptop",
+      "ip": "10.0.10.50",
+      "gateway": "10.0.10.1",
+      "router": "R1"
+    }
+  ],
+  "routers": [
+    {
+      "id": "R1",
+      "name": "R1 (edge)",
+      "position": 1,
+      "interfaces": [
+        {
+          "iface": "eth0",
+          "ip": "10.0.10.1/24",
+          "note": "LAN, laptop segment"
+        },
+        {
+          "iface": "eth1",
+          "ip": "10.0.99.1/30",
+          "note": "link to R2"
+        }
+      ],
+      "table": [
+        {
+          "prefix": "10.0.10.0/24",
+          "via": null,
+          "iface": "eth0",
+          "metric": 0,
+          "proto": "connected"
+        },
+        {
+          "prefix": "10.0.20.0/24",
+          "via": "10.0.99.2",
+          "iface": "eth1",
+          "metric": 10,
+          "proto": "static"
+        },
+        {
+          "prefix": "10.0.30.0/24",
+          "via": "10.0.99.2",
+          "iface": "eth1",
+          "metric": 10,
+          "proto": "static"
+        },
+        {
+          "prefix": "10.0.40.0/24",
+          "via": "10.0.99.2",
+          "iface": "eth1",
+          "metric": 10,
+          "proto": "static"
+        },
+        {
+          "prefix": "0.0.0.0/0",
+          "via": "10.0.99.2",
+          "iface": "eth1",
+          "metric": 100,
+          "proto": "static"
+        }
+      ]
+    },
+    {
+      "id": "R2",
+      "name": "R2 (core)",
+      "position": 2,
+      "interfaces": [
+        {
+          "iface": "eth0",
+          "ip": "10.0.99.2/30",
+          "note": "link to R1"
+        },
+        {
+          "iface": "eth1",
+          "ip": "10.0.20.1/24",
+          "note": "servers"
+        },
+        {
+          "iface": "eth2",
+          "ip": "10.0.30.1/24",
+          "note": "branch"
+        }
+      ],
+      "table": [
+        {
+          "prefix": "10.0.99.0/30",
+          "via": null,
+          "iface": "eth0",
+          "metric": 0,
+          "proto": "connected"
+        },
+        {
+          "prefix": "10.0.10.0/24",
+          "via": "10.0.99.1",
+          "iface": "eth0",
+          "metric": 10,
+          "proto": "static"
+        },
+        {
+          "prefix": "10.0.20.0/24",
+          "via": null,
+          "iface": "eth1",
+          "metric": 0,
+          "proto": "connected"
+        },
+        {
+          "prefix": "10.0.30.0/24",
+          "via": null,
+          "iface": "eth2",
+          "metric": 0,
+          "proto": "connected"
+        },
+        {
+          "prefix": "10.0.40.0/24",
+          "via": "10.0.30.2",
+          "iface": "eth2",
+          "metric": 20,
+          "proto": "static"
+        },
+        {
+          "prefix": "0.0.0.0/0",
+          "via": "10.0.20.254",
+          "iface": "eth1",
+          "metric": 100,
+          "proto": "static"
+        }
+      ]
+    },
+    {
+      "id": "R3",
+      "name": "R3 (branch)",
+      "position": 3,
+      "interfaces": [
+        {
+          "iface": "eth0",
+          "ip": "10.0.30.2/24",
+          "note": "uplink"
+        },
+        {
+          "iface": "eth1",
+          "ip": "10.0.40.1/24",
+          "note": "branch hosts"
+        }
+      ],
+      "table": [
+        {
+          "prefix": "10.0.30.0/24",
+          "via": null,
+          "iface": "eth0",
+          "metric": 0,
+          "proto": "connected"
+        },
+        {
+          "prefix": "10.0.40.0/24",
+          "via": null,
+          "iface": "eth1",
+          "metric": 0,
+          "proto": "connected"
+        },
+        {
+          "prefix": "0.0.0.0/0",
+          "via": "10.0.30.1",
+          "iface": "eth0",
+          "metric": 100,
+          "proto": "static"
+        }
+      ]
+    },
+    {
+      "id": "R4",
+      "name": "R4 (ISP edge)",
+      "note": "The provider edge. Everything not destined for the lab leaves here.",
+      "interfaces": [
+        {
+          "iface": "eth0",
+          "ip": "10.0.20.254/24"
+        },
+        {
+          "iface": "wan0",
+          "ip": "203.0.113.9/30"
+        }
+      ],
+      "table": [
+        {
+          "prefix": "10.0.20.0/24",
+          "via": null,
+          "iface": "eth0",
+          "metric": 0,
+          "proto": "connected"
+        },
+        {
+          "prefix": "0.0.0.0/0",
+          "via": null,
+          "iface": "wan0",
+          "metric": 0,
+          "proto": "isp"
+        }
+      ]
+    }
+  ],
+  "destinations": [
+    {
+      "ip": "10.0.20.10",
+      "label": "server in the core subnet",
+      "expect": "reached"
+    },
+    {
+      "ip": "10.0.40.55",
+      "label": "branch host",
+      "expect": "reached"
+    },
+    {
+      "ip": "10.0.40.20",
+      "label": "branch host inside 10.0.40.16/28"
+    },
+    {
+      "ip": "10.0.10.77",
+      "label": "another laptop on the local LAN",
+      "expect": "reached"
+    },
+    {
+      "ip": "203.0.113.20",
+      "label": "public address",
+      "expect": "reached"
+    },
+    {
+      "ip": "10.0.88.5",
+      "label": "unknown prefix",
+      "expect": "default"
+    }
+  ],
+  "faults": [
+    {
+      "id": "none",
+      "label": "No fault (healthy tables)",
+      "detail": "All tables are consistent and every destination is reachable.",
+      "apply": []
+    },
+    {
+      "id": "no_default",
+      "label": "R1 missing default route",
+      "detail": "The edge router has no 0.0.0.0/0 entry, so anything not in its table is unreachable.",
+      "apply": [
+        {
+          "router": "R1",
+          "remove": "0.0.0.0/0"
+        }
+      ],
+      "symptom": "Public destinations fail with 'network unreachable' while internal subnets still work.",
+      "diagnosis": "ip route on the host shows the default via R1, but R1 has no catch-all, so it drops the packet.",
+      "fix": "Restore the default route on the edge router."
+    },
+    {
+      "id": "wrong_mask",
+      "label": "R3 has 10.0.40.0/28 instead of /24",
+      "detail": "The branch router's connected route is too specific, so most of 10.0.40.0/24 is no longer on-link there. Those addresses fall through to its default route — back towards the core.",
+      "apply": [
+        {
+          "router": "R3",
+          "replace": {
+            "from": "10.0.40.0/24",
+            "prefix": "10.0.40.0/28"
+          }
+        }
+      ],
+      "symptom": "Hosts in 10.0.40.0/24 except the first 16 addresses become unreachable, and traceroute shows the path bouncing between R2 and R3.",
+      "diagnosis": "ip route on R3 shows a /28 for a subnet that is really a /24; the return path differs per address.",
+      "fix": "Restore the connected route to 10.0.40.0/24."
+    },
+    {
+      "id": "wrong_next_hop",
+      "label": "R1 next hop pointing at a non-adjacent address",
+      "detail": "The static route points at 10.0.99.99, which is not a real neighbour on the link.",
+      "apply": [
+        {
+          "router": "R1",
+          "replace": {
+            "from": "10.0.40.0/24",
+            "via": "10.0.99.99"
+          }
+        }
+      ],
+      "symptom": "Traffic to 10.0.40.0/24 is dropped; ARP for the next hop never resolves.",
+      "diagnosis": "ip neigh shows the next hop FAILED; R1 cannot ARP for an address nobody owns.",
+      "fix": "Point the route at a real neighbour (10.0.99.2)."
+    },
+    {
+      "id": "more_specific",
+      "label": "A more specific route overrides the aggregate (broken)",
+      "detail": "R1 gains a /28 for part of the branch network, pointing at 10.0.99.99 — an address nobody owns. Longest prefix match prefers it over the working /24.",
+      "apply": [
+        {
+          "router": "R1",
+          "add": {
+            "prefix": "10.0.40.16/28",
+            "via": "10.0.99.99",
+            "iface": "eth1",
+            "metric": 5,
+            "proto": "static"
+          }
+        }
+      ],
+      "symptom": "10.0.40.20 is unreachable while 10.0.40.55 works, even though both are inside 10.0.40.0/24.",
+      "diagnosis": "ip route get 10.0.40.20 shows the /28; ip neigh shows the next hop failed. Compare with 10.0.40.55, which still uses the /24.",
+      "fix": "Remove the more-specific, or point it at a reachable next hop."
+    },
+    {
+      "id": "loop",
+      "label": "Routing loop between R1 and R2",
+      "detail": "Both routers point at each other for 10.0.40.0/24.",
+      "apply": [
+        {
+          "router": "R1",
+          "replace": {
+            "from": "10.0.40.0/24",
+            "via": "10.0.99.2"
+          }
+        },
+        {
+          "router": "R2",
+          "replace": {
+            "from": "10.0.40.0/24",
+            "via": "10.0.99.1"
+          }
+        }
+      ],
+      "symptom": "Latency climbs, TTL expires, and traceroute shows R1 and R2 repeating.",
+      "diagnosis": "The destination's packets bounce until TTL reaches zero; each router thinks the other is the path.",
+      "fix": "Correct at least one router so the path is acyclic (R2 should point at 10.0.30.2)."
+    }
+  ]
+}

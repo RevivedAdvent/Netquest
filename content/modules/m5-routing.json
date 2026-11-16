@@ -1,0 +1,115 @@
+{
+  "id": "m5",
+  "number": 5,
+  "title": "Static and Dynamic Routing",
+  "tagline": "How a packet chooses its next hop, and who tells it.",
+  "priority": "core",
+  "weight": 1.7,
+  "estimated_minutes": 110,
+  "summary": "Routing is one decision — longest prefix match — repeated at every hop. This module covers routing tables, static and default routes, metrics and administrative distance, then introduces RIP, OSPF and BGP and what each is actually for.",
+  "objectives": [
+    "Explain Layer 2 forwarding versus Layer 3 routing in terms of what changes at each hop.",
+    "Read a routing table and identify connected, local, static and dynamic routes.",
+    "Apply longest prefix match to real entries and explain why the most specific wins.",
+    "Explain metrics and administrative distance, and why implementations differ.",
+    "Describe distance-vector, link-state and path-vector routing and where each fits.",
+    "Recognise routing loops and the symptoms they produce."
+  ],
+  "key_questions": [
+    "How does a router choose between two routes to the same destination?",
+    "What is longest prefix match, with an example where it surprises people?",
+    "What is the difference between static and dynamic routing?",
+    "Why does OSPF use link state while RIP uses hop count?",
+    "What is an autonomous system, and why does BGP exist?"
+  ],
+  "lesson_ids": [
+    "m5l1",
+    "m5l2",
+    "m5l3"
+  ],
+  "lab_ids": [
+    "ip-route"
+  ],
+  "mission_ids": [
+    "case08",
+    "case05"
+  ],
+  "assessment": [
+    {
+      "id": "q-m5a-1",
+      "type": "mcq",
+      "prompt": "A routing table has 10.0.0.0/8 via A, 10.1.0.0/16 via B, and 10.1.2.0/24 via C. Where does a packet to 10.1.2.55 go?",
+      "options": [
+        "It is sent to all three",
+        "A",
+        "C",
+        "B"
+      ],
+      "answer": 2,
+      "explanation": "Longest prefix match: /24 is more specific than /16 and /8, so C wins regardless of metric.",
+      "why_wrong": {
+        "1": "Only correct if no more specific route existed.",
+        "3": "Correct for 10.1.x.x outside 10.1.2.0/24.",
+        "0": "Routers select exactly one route."
+      },
+      "concepts": [
+        "longest prefix match"
+      ]
+    },
+    {
+      "id": "q-m5a-2",
+      "type": "mcq",
+      "prompt": "What does an administrative distance (or preference) do?",
+      "options": [
+        "Selects between routes to the same prefix learned from different sources",
+        "Determines the NAT translation order",
+        "Breaks ties between routes with different prefix lengths",
+        "Sets the TTL of outgoing packets"
+      ],
+      "answer": 0,
+      "explanation": "When two sources advertise the same prefix, the source with the lower distance wins; metric then breaks ties within one protocol.",
+      "why_wrong": {
+        "2": "Prefix length decides first; distance only compares identical prefixes.",
+        "3": "TTL is a per-packet field.",
+        "1": "NAT ordering is unrelated."
+      },
+      "concepts": [
+        "administrative distance",
+        "route selection"
+      ]
+    },
+    {
+      "id": "q-m5a-3",
+      "type": "self",
+      "prompt": "Explain longest prefix match and why 'the most specific route wins even if it is a worse path' is a design decision, not a bug.",
+      "checklist": [
+        {
+          "text": "A router compares the destination against every prefix and selects the one with the longest match.",
+          "weight": 2
+        },
+        {
+          "text": "Prefix length is checked before metric or administrative distance.",
+          "weight": 2
+        },
+        {
+          "text": "Specificity encodes intent: a /24 usually represents a deliberately configured policy for that subnet.",
+          "weight": 2
+        },
+        {
+          "text": "Deaggregation and more-specific routes can therefore override a provider's routing, accidentally or on purpose.",
+          "weight": 1
+        },
+        {
+          "text": "Verification with ip route get shows the chosen entry.",
+          "weight": 1
+        }
+      ],
+      "reference": "<p>Longest prefix match is evaluated before any metric comparison: the router finds all entries that contain the destination and picks the one with the longest mask. That is a policy statement — the more precisely an operator describes a network, the more authority that statement has. It is why a leaked /24 can override an aggregate /8, why traffic engineering uses more-specifics, and why a missing more-specific route sends traffic to a default gateway that cannot handle it. <code>ip route get</code> shows the winning entry directly.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "longest prefix match",
+        "route selection"
+      ]
+    }
+  ]
+}

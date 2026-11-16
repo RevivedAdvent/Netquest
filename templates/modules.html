@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Learn — NetQuest{% endblock %}
+{% block crumb %}Study / Modules{% endblock %}
+{% block mastery_pct %}{{ (stats | sum(attribute='mastery') / (stats | length)) | round | int }}%{% endblock %}
+
+{% block content %}
+<div class="wrap-wide">
+  <div class="split mb16">
+    <div>
+      <div class="eyebrow">Seven modules &middot; networking first, Linux second</div>
+      <h1 class="mt0">Curriculum</h1>
+      <p class="lead mb0">Work top to bottom, or skip what the diagnostic marked strong. Mastery per module is weighted: lessons 15%, checks 25%, labs 25%, case studies 20%, assessment 15%.</p>
+    </div>
+    {% if not diagnostic_done %}
+    <a class="btn" href="/diagnostic">Run the diagnostic first</a>
+    {% endif %}
+  </div>
+
+  {% for s in stats %}
+  {% set m = modules[loop.index0] %}
+  <div class="card">
+    <div class="split">
+      <div style="flex:1; min-width:0">
+        <div class="flex flex-wrap" style="margin-bottom:4px">
+          <span class="badge mono">M{{ m.number }}</span>
+          <span class="badge {{ 'ok' if s.status == 'mastered' else 'warn' if s.status == 'assessed' else '' }}">{{ s.status | replace('_', ' ') }}</span>
+          <span class="badge">{{ m.priority }}</span>
+          {% if m.weight >= 1.8 %}<span class="badge mono">weight {{ m.weight }}</span>{% endif %}
+        </div>
+        <h2 class="mt0 mb0" style="font-size:19px"><a href="/learn/{{ m.id }}">{{ m.title }}</a></h2>
+        <div class="small muted">{{ m.tagline }}</div>
+      </div>
+      <div class="right" style="min-width:160px">
+        <div class="mono" style="font-size:22px">{{ s.mastery }}%</div>
+        <div class="bar" style="width:130px; margin-left:auto"><span style="width: {{ s.mastery }}%"></span></div>
+      </div>
+    </div>
+
+    <div class="grid grid-4 mt16" style="gap:10px">
+      <div class="small"><span class="muted">Lessons</span><br><b>{{ s.lessons_completed }}/{{ s.lessons_total }}</b></div>
+      <div class="small"><span class="muted">Checks</span><br><b>{{ s.checks_percent }}%</b></div>
+      <div class="small"><span class="muted">Labs (sim / real)</span><br><b>{{ s.labs_done }}/{{ s.labs_total }} &middot; {{ s.labs_real_done }}</b></div>
+      <div class="small"><span class="muted">Case studies</span><br><b>{{ s.missions_solved }}/{{ s.missions_total }}</b></div>
+    </div>
+
+    <div class="btn-row mt16">
+      <a class="btn small primary" href="/learn/{{ m.id }}">Open module</a>
+      {% if m.lesson_ids %}<a class="btn small ghost" href="/lesson/{{ m.lesson_ids[0] }}">First lesson</a>{% endif %}
+      {% if m.lab_ids %}<a class="btn small ghost" href="/labs/{{ m.lab_ids[0] }}">Command lab</a>{% endif %}
+      {% if m.mission_ids %}<a class="btn small ghost" href="/missions/{{ m.mission_ids[0] }}">Case study</a>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="card tight">
+    <div class="card-title"><h3 class="mt0">Already strong somewhere?</h3></div>
+    <p class="small mb0">The diagnostic sets a plan, but nothing is locked. Skip to a module assessment with the sidebar links, or use <a href="/revision">Revision</a> to spot-check recall in ten minutes.</p>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,520 @@
+{
+  "intro": "A deterministic mock interview. Each answer is a spoken explanation that you score against a curated checklist — the same way a real interviewer mentally ticks off what they heard. A weak answer earns a probing follow-up; a strong answer earns a harder one.",
+  "topic_modules": {
+    "ip-addressing": "m1",
+    "switching": "m2",
+    "dhcp-dns": "m3",
+    "troubleshooting": "m4",
+    "routing": "m5",
+    "linux-permissions": "m6",
+    "linux-processes": "m7"
+  },
+  "topics": [
+    {"id": "ip-addressing", "label": "IP addressing and subnetting"},
+    {"id": "switching", "label": "Switching and VLANs"},
+    {"id": "dhcp-dns", "label": "DHCP and DNS"},
+    {"id": "troubleshooting", "label": "Connectivity troubleshooting"},
+    {"id": "routing", "label": "Routing"},
+    {"id": "linux-permissions", "label": "Linux permissions"},
+    {"id": "linux-processes", "label": "Process management"}
+  ],
+  "questions": [
+    {
+      "id": "q-subnet-mask",
+      "topic": "ip-addressing",
+      "kind": "conceptual",
+      "priority": 3,
+      "prompt": "Explain what a subnet mask does and how a host uses it to decide whether to ARP for a destination.",
+      "checklist": [
+        {"text": "The mask splits the address into a network part and a host part.", "weight": 2},
+        {"text": "The host ANDs its own address and the destination with the mask and compares the results.", "weight": 2},
+        {"text": "Equal results mean the destination is on-link, so it ARPs for the destination directly.", "weight": 2},
+        {"text": "Different results mean it sends to the gateway, ARPing for the gateway's MAC instead.", "weight": 2},
+        {"text": "A wrong mask therefore changes the decision itself, producing partial connectivity.", "weight": 1}
+      ],
+      "min_to_pass": 0.7,
+      "reference": "<p>The mask defines which bits identify the network. A host performs a bitwise AND of its own address and of the destination with that mask. If the results match, the destination is inside its own subnet and it resolves the destination's MAC directly with ARP. If not, the packet is off-link: it ARPs for the default gateway and sends the frame there, leaving the destination IP unchanged. This is why a mask error does not merely break routing — it breaks the on-link decision, so some addresses work and others do not.</p>",
+      "followups": [
+        {
+          "id": "q-subnet-mask-w",
+          "after": "weak",
+          "topic": "ip-addressing",
+          "kind": "conceptual",
+          "prompt": "Take 10.20.30.200/26. What are the network, first usable, last usable and broadcast addresses?",
+          "checklist": [
+            {"text": "The block size is 64, so the boundaries are .128 and .192.", "weight": 2},
+            {"text": "Network 10.20.30.192, broadcast 10.20.30.255.", "weight": 2},
+            {"text": "Usable range .193 to .254, giving 62 hosts.", "weight": 2}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>/26 means 2 host bits, 64 addresses per block: .0, .64, .128, .192. Since 200 falls in .192-.255, the network is .192 and the broadcast is .255. Usable addresses are .193-.254. The gateway must be one of those.</p>"
+        },
+        {
+          "id": "q-subnet-mask-s",
+          "after": "strong",
+          "topic": "ip-addressing",
+          "kind": "scenario",
+          "prompt": "Two hosts on the same switch, 10.0.10.5/24 and 10.0.20.5/24, no router. Explain precisely why the first ping produces no frame at all.",
+          "checklist": [
+            {"text": "The sender ANDs the destination and finds it off-link.", "weight": 2},
+            {"text": "It therefore needs a gateway MAC, not the destination MAC.", "weight": 2},
+            {"text": "With no default route, the kernel fails with network unreachable before any frame is built.", "weight": 2},
+            {"text": "Switching is irrelevant: the packet never reaches the NIC.", "weight": 1}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>The sender classifies 10.0.20.5 as off-link and looks for a route. Without a default gateway there is no next hop, so the kernel returns network unreachable and no frame is emitted. The switch never sees anything — which is why 'the switch must be blocking it' is the wrong conclusion.</p>"
+        }
+      ]
+    },
+    {
+      "id": "q-arp",
+      "topic": "ip-addressing",
+      "kind": "conceptual",
+      "priority": 2,
+      "prompt": "Walk me through ARP and explain why the ARP cache can be the cause of intermittent connectivity.",
+      "checklist": [
+        {"text": "ARP resolves an IPv4 address to a MAC address on the local segment via broadcast request and unicast reply.", "weight": 2},
+        {"text": "Entries are cached with a timeout and refreshed, so a changed NIC or a duplicate address leaves stale state.", "weight": 2},
+        {"text": "A duplicate IP gives two hosts answering for one address, so traffic goes to whichever answered last.", "weight": 2},
+        {"text": "ip neigh shows REACHABLE, STALE, DELAY, PROBE and FAILED, and FAILED localises the problem to L2.", "weight": 1}
+      ],
+      "min_to_pass": 0.65,
+      "reference": "<p>ARP is the glue between Layer 3 addressing and Layer 2 delivery: a broadcast 'who has this IP' and a unicast reply carrying the MAC. Entries are cached, so changes create windows of inconsistency. Duplicate addresses produce intermittent, address-dependent failures because both hosts answer and the cache settles on one of them. ip neigh is the fastest way to see whether resolution is working at all.</p>",
+      "followups": [
+        {
+          "id": "q-arp-w",
+          "after": "weak",
+          "topic": "ip-addressing",
+          "kind": "command",
+          "prompt": "Which command shows the neighbour table, and what would a FAILED entry tell you?",
+          "checklist": [
+            {"text": "ip neigh (or ip neighbour show), per interface.", "weight": 2},
+            {"text": "FAILED means ARP requests went unanswered.", "weight": 2},
+            {"text": "That localises the problem to Layer 2: wrong VLAN, wrong mask, or a host that is not there.", "weight": 2}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>ip neigh lists IP-to-MAC mappings and their state. FAILED means the host is shouting on the segment and nobody answered, which points at the local segment rather than at routing.</p>"
+        }
+      ]
+    },
+    {
+      "id": "q-mac-learning",
+      "topic": "switching",
+      "kind": "conceptual",
+      "priority": 3,
+      "prompt": "How does a switch build its MAC table, and how does it decide to forward, flood or filter a frame?",
+      "checklist": [
+        {"text": "It learns the source MAC and the ingress port, per VLAN.", "weight": 2},
+        {"text": "It looks up the destination MAC in the table for the forwarding decision.", "weight": 2},
+        {"text": "Unknown destination or broadcast is flooded to all ports in the VLAN except the ingress port.", "weight": 2},
+        {"text": "A known destination is forwarded out exactly one port; if that port is the ingress port the frame is filtered.", "weight": 2},
+        {"text": "Entries age out, so silence from a host eventually returns it to the flooding path.", "weight": 1}
+      ],
+      "min_to_pass": 0.7,
+      "reference": "<p>Learning is from the source, always, before the forwarding decision. The destination drives the action: known and different port means forward, known and same port means filter, unknown or broadcast means flood within the VLAN. The table is scoped per VLAN, which is why the same MAC in two VLANs is not a conflict.</p>",
+      "followups": [
+        {
+          "id": "q-mac-learning-w",
+          "after": "weak",
+          "topic": "switching",
+          "kind": "scenario",
+          "prompt": "A host sends its very first frame. What does the switch know before and after that frame?",
+          "checklist": [
+            {"text": "Before: nothing about either address.", "weight": 2},
+            {"text": "After: the sender's MAC and port are learned from the source.", "weight": 2},
+            {"text": "The frame itself is flooded, because the destination is still unknown.", "weight": 2}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>Before the frame the table is empty for both hosts. The source is learned immediately, but the destination stays unknown so the frame is flooded. The reply is what teaches the switch where the destination lives.</p>"
+        },
+        {
+          "id": "q-mac-learning-s",
+          "after": "strong",
+          "topic": "switching",
+          "kind": "scenario",
+          "prompt": "You see the same MAC address alternating between two uplink ports in the MAC table. What does that mean and what do you check?",
+          "checklist": [
+            {"text": "MAC flapping means frames for that address arrive on two different ports.", "weight": 2},
+            {"text": "The usual cause is a Layer 2 loop between two switches.", "weight": 2},
+            {"text": "Check spanning tree state, duplicate cabling, and whether a LAG is misconfigured.", "weight": 2},
+            {"text": "Expect broadcast amplification and high switch CPU as accompanying symptoms.", "weight": 1}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>A MAC appearing on two ports means the topology has two paths to the same host — a loop. Check that STP is enabled and one path is blocking, that there is no accidental second cable, and that any LAG is configured identically at both ends. Loops also produce broadcast storms and MAC table churn, so they are rarely subtle.</p>"
+        }
+      ]
+    },
+    {
+      "id": "q-vlan-trunk",
+      "topic": "switching",
+      "kind": "conceptual",
+      "priority": 2,
+      "prompt": "Explain access ports, trunk ports and the 802.1Q tag. What goes wrong with a native VLAN mismatch?",
+      "checklist": [
+        {"text": "An access port belongs to one VLAN and sends untagged frames to the end device.", "weight": 2},
+        {"text": "A trunk carries multiple VLANs and tags frames with a 4-byte 802.1Q header containing the VLAN id.", "weight": 2},
+        {"text": "Untagged frames on a trunk belong to the native VLAN.", "weight": 2},
+        {"text": "A native VLAN mismatch merges two VLANs silently and can leak one VLAN's traffic into another.", "weight": 2}
+      ],
+      "min_to_pass": 0.7,
+      "reference": "<p>Access ports are edge ports: one VLAN, untagged. Trunks carry several VLANs, and each frame gets an 802.1Q tag so the far switch knows which VLAN it belongs to. Frames with no tag are assigned to the native VLAN, so if the two ends disagree about which VLAN is native, untagged traffic silently lands in the wrong broadcast domain — a security and troubleshooting problem that produces no error at all.</p>",
+      "followups": [
+        {
+          "id": "q-vlan-trunk-w",
+          "after": "weak",
+          "topic": "switching",
+          "kind": "conceptual",
+          "prompt": "Two hosts in different VLANs on the same switch need to talk. What has to exist?",
+          "checklist": [
+            {"text": "A router or Layer 3 switch with an interface in each VLAN.", "weight": 2},
+            {"text": "The hosts must be in different subnets with the L3 interface as their gateway.", "weight": 2},
+            {"text": "Layer 2 alone will never forward between VLANs.", "weight": 2}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>VLANs are separate broadcast domains, so inter-VLAN traffic must be routed. That means an SVI or subinterface in each VLAN, different subnets on the hosts, and the L3 interface as the default gateway — either router-on-a-stick over a trunk or a Layer 3 switch.</p>"
+        }
+      ]
+    },
+    {
+      "id": "q-dhcp-dora",
+      "topic": "dhcp-dns",
+      "kind": "conceptual",
+      "priority": 3,
+      "prompt": "Describe the DHCP DORA exchange and explain why the client broadcasts the REQUEST even after receiving an offer.",
+      "checklist": [
+        {"text": "DISCOVER is broadcast because the client has no address.", "weight": 1},
+        {"text": "OFFER proposes an address and options; the server reserves it temporarily.", "weight": 1},
+        {"text": "REQUEST names the chosen server via the server identifier and is broadcast so other servers withdraw their offers.", "weight": 2},
+        {"text": "ACK commits the lease and carries mask, gateway, DNS and lease timers.", "weight": 2},
+        {"text": "Renewal happens at T1 (50%) by unicast and rebinding at T2 (87.5%) by broadcast.", "weight": 1}
+      ],
+      "min_to_pass": 0.7,
+      "reference": "<p>DORA is a two-phase commit. The DISCOVER is a broadcast because the client has nothing else. Offers may be plural, so the broadcast REQUEST is also a public decline notice, telling the other servers to release their reservations. The ACK is the authoritative configuration: the client installs the address, the connected route, the default route from option 3 and the resolvers from option 6. Then it renews at 50% of the lease and rebinds at 87.5%.</p>",
+      "followups": [
+        {
+          "id": "q-dhcp-dora-w",
+          "after": "weak",
+          "topic": "dhcp-dns",
+          "kind": "scenario",
+          "prompt": "A client has an address and can ping its own subnet, but nothing else works. Which DHCP option do you suspect?",
+          "checklist": [
+            {"text": "Option 3, the default gateway.", "weight": 2},
+            {"text": "Local connectivity proves the address and mask are usable.", "weight": 2},
+            {"text": "Verify with ip route and by pinging the gateway.", "weight": 1}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>Option 3. Working local connectivity isolates the failure to off-link traffic, which needs a gateway. Check ip route for the default and ping the gateway address directly; if the DHCP scope is wrong, every client on that scope shares the symptom.</p>"
+        },
+        {
+          "id": "q-dhcp-dora-s",
+          "after": "strong",
+          "topic": "dhcp-dns",
+          "kind": "scenario",
+          "prompt": "Clients in one VLAN get no address while another VLAN served by the same server is fine. How do you investigate?",
+          "checklist": [
+            {"text": "Capture on the client segment to see whether DISCOVERs leave.", "weight": 2},
+            {"text": "Capture at the server to see whether anything arrives with the right giaddr.", "weight": 2},
+            {"text": "If nothing arrives, the relay (ip helper-address) on that VLAN's gateway is the suspect.", "weight": 2},
+            {"text": "Also check the scope mapping for that subnet and whether the pool has free addresses.", "weight": 1}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>Split the problem at the relay. DISCOVERs leaving the client plus nothing arriving at the server means the relay is missing or misconfigured. If they do arrive with a giaddr, compare that giaddr with the scope network; and check free addresses in the scope. One capture at each end narrows it in minutes.</p>"
+        }
+      ]
+    },
+    {
+      "id": "q-dns-failures",
+      "topic": "dhcp-dns",
+      "kind": "conceptual",
+      "priority": 3,
+      "prompt": "Distinguish NXDOMAIN, NODATA, SERVFAIL and a timeout. What does each tell you about where to look?",
+      "checklist": [
+        {"text": "NXDOMAIN: the name does not exist in the zone that answered, which also gives the negative-cache TTL.", "weight": 2},
+        {"text": "NODATA: the name exists but has no record of that type (NOERROR with an empty answer).", "weight": 2},
+        {"text": "SERVFAIL: the server tried and failed — DNSSEC validation, broken delegation, unreachable upstream.", "weight": 2},
+        {"text": "Timeout: silence — wrong address, filtered path, or a dead server. Nothing is cached.", "weight": 2}
+      ],
+      "min_to_pass": 0.7,
+      "reference": "<p>These four are diagnostically distinct. NXDOMAIN is an authoritative statement of absence and is cacheable. NODATA means the name exists with other types. SERVFAIL means the lookup was attempted and could not complete, so look at the zone's delegation and DNSSEC. A timeout means no answer at all, so look at reachability and the resolver configuration. Reading which one you have removes most of the guesswork.</p>",
+      "followups": [
+        {
+          "id": "q-dns-failures-w",
+          "after": "weak",
+          "topic": "dhcp-dns",
+          "kind": "command",
+          "prompt": "Which commands show you the current resolver configuration on a Fedora machine, and why is /etc/resolv.conf sometimes misleading?",
+          "checklist": [
+            {"text": "resolvectl status shows per-link DNS servers and routing domains.", "weight": 2},
+            {"text": "/etc/resolv.conf may be a stub pointing at 127.0.0.53 managed by systemd-resolved.", "weight": 2},
+            {"text": "The effective server can therefore differ per interface.", "weight": 1}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>resolvectl status is authoritative with systemd-resolved, because it shows the per-link servers and routing domains that actually decide where a query goes. /etc/resolv.conf is often a generated stub naming 127.0.0.53, so reading it alone tells you almost nothing about the real path.</p>"
+        },
+        {
+          "id": "q-dns-failures-s",
+          "after": "strong",
+          "topic": "dhcp-dns",
+          "kind": "scenario",
+          "prompt": "You must move a service to a new IP with minimal disruption. What do you do about DNS?",
+          "checklist": [
+            {"text": "Lower the record's TTL to something short, at least one old-TTL period before the change.", "weight": 2},
+            {"text": "Keep both endpoints serving during the transition window.", "weight": 2},
+            {"text": "Make the change, then verify from multiple resolvers and against the authoritative server.", "weight": 2},
+            {"text": "Watch the old endpoint's traffic fall to zero before decommissioning and restore the normal TTL.", "weight": 1}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>Shorten the TTL first — changing it at cutover time does not affect already-cached entries. Keep both endpoints live, make the change, and verify from several resolvers plus the authority. Then watch the old endpoint until its traffic reaches zero, and only then raise the TTL back. That is the whole method behind what people call a clean propagation.</p>"
+        }
+      ]
+    },
+    {
+      "id": "q-ts-approach",
+      "topic": "troubleshooting",
+      "kind": "conceptual",
+      "priority": 3,
+      "prompt": "A user says 'the network is down'. Give me your first four steps, and what each one eliminates.",
+      "checklist": [
+        {"text": "Scope the failure: one user or many, one destination or all, one protocol or everything.", "weight": 2},
+        {"text": "Test by IP before by name, which separates resolution from reachability.", "weight": 2},
+        {"text": "Test the local side: link, address, mask, gateway, ARP.", "weight": 2},
+        {"text": "Test the far side with a capture or a listening-socket check instead of more client tests.", "weight": 2},
+        {"text": "Each step should eliminate a layer, not merely collect output.", "weight": 1}
+      ],
+      "min_to_pass": 0.7,
+      "reference": "<p>First, scope it: one host or many tells you whether to look at the client or the infrastructure. Second, test by IP to separate DNS from connectivity. Third, confirm the client's own stack: link state, address, mask, gateway, ARP. Fourth, look at the destination: is anything listening, and do the packets arrive? That order eliminates the largest number of possibilities per command, and every step should reduce the hypothesis space rather than just gather data.</p>",
+      "followups": [
+        {
+          "id": "q-ts-approach-w",
+          "after": "weak",
+          "topic": "troubleshooting",
+          "kind": "conceptual",
+          "prompt": "What is the difference between ping succeeding and a service being healthy?",
+          "checklist": [
+            {"text": "Ping only proves ICMP works in that direction.", "weight": 2},
+            {"text": "A service can be down while the host is up (no listener, wrong bind address).", "weight": 2},
+            {"text": "A firewall may allow ICMP and block the service port, or the reverse.", "weight": 1}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>Ping is a host-level, ICMP-level test. It says the host is reachable in that direction and that ICMP is permitted. It says nothing about whether the service is running, which address it is bound to, or whether its port is allowed. That is why 'but I can ping it' is the least useful sentence in a troubleshooting conversation.</p>"
+        },
+        {
+          "id": "q-ts-approach-s",
+          "after": "strong",
+          "topic": "troubleshooting",
+          "kind": "scenario",
+          "prompt": "You capture SYNs arriving at the server with no SYN-ACK. Give me the possible causes and the test that separates them.",
+          "checklist": [
+            {"text": "Nothing listening on that address:port, so the kernel stays silent or sends RST depending on policy.", "weight": 2},
+            {"text": "A host firewall DROP on the port.", "weight": 2},
+            {"text": "The reply is filtered on the return path, or the source address of the reply is wrong.", "weight": 2},
+            {"text": "Test with ss -lntp for the listener and a local curl to the same address to bypass the network.", "weight": 2}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>Three families: no listener (bound elsewhere or not running), a local filter (DROP), or the reply never getting back. Check ss -lntp for the listening address, then curl the same address from the server itself — if that fails too, the fault is on the host, not the network. If it succeeds locally but not remotely, look at the firewall and the return path.</p>"
+        }
+      ]
+    },
+    {
+      "id": "q-ts-mtu",
+      "topic": "troubleshooting",
+      "kind": "scenario",
+      "priority": 2,
+      "prompt": "Small requests work, large transfers hang. Explain how you confirm and fix an MTU black hole.",
+      "checklist": [
+        {"text": "Confirm the failure is size-dependent with a DF ping sweep.", "weight": 2},
+        {"text": "Identify the smallest MTU on the path, e.g. tracepath reporting pmtu at a tunnel hop.", "weight": 2},
+        {"text": "Explain that PMTUD needs ICMP fragmentation-needed to reach the sender, and that filtering it creates the black hole.", "weight": 2},
+        {"text": "Fix by allowing that ICMP and/or clamping TCP MSS at the tunnel, not by lowering MTU everywhere.", "weight": 2}
+      ],
+      "min_to_pass": 0.7,
+      "reference": "<p>If success depends on payload size, it is MTU. Sweep with ping -M do -s to find the boundary, and use tracepath to see which hop reports the lower pmtu. The black hole exists because the intermediate device cannot deliver ICMP fragmentation-needed, so the sender keeps building oversized segments. Fix it by permitting that ICMP and clamping MSS on the tunnel; lowering the MTU on every host is a workaround, not a design.</p>"
+    },
+    {
+      "id": "q-routing-lpm",
+      "topic": "routing",
+      "kind": "conceptual",
+      "priority": 3,
+      "prompt": "How does a router choose between routes, and why does prefix length win over metric?",
+      "checklist": [
+        {"text": "It looks only at routes matching the destination, then selects the longest prefix.", "weight": 2},
+        {"text": "Only among routes with the same prefix does it compare metric, then administrative distance or protocol preference.", "weight": 2},
+        {"text": "A more specific route is a more precise statement about where that address lives.", "weight": 2},
+        {"text": "No match means the packet is dropped with network unreachable, unless a default route exists.", "weight": 1}
+      ],
+      "min_to_pass": 0.7,
+      "reference": "<p>Routing is a most-specific-match problem, not a best-metric problem. The router finds every route containing the destination, takes the longest prefix, and only then compares metrics among equally specific candidates. A /16 that describes a subnetwork is more accurate than a /8 that covers everything, so it wins even with a worse metric. If nothing matches and there is no 0.0.0.0/0, the packet is dropped.</p>",
+      "followups": [
+        {
+          "id": "q-routing-lpm-w",
+          "after": "weak",
+          "topic": "routing",
+          "kind": "conceptual",
+          "prompt": "What is a default route and what happens when it is missing?",
+          "checklist": [
+            {"text": "It is 0.0.0.0/0, matching any destination.", "weight": 2},
+            {"text": "Without it, anything not covered by a more specific route is unreachable.", "weight": 2},
+            {"text": "Internal subnets keep working, which makes the failure look partial.", "weight": 1}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>0.0.0.0/0 is the catch-all with a prefix length of zero. Remove it and every destination outside the explicit table becomes unreachable, while internal traffic continues — a partial failure that users describe as 'the internet is down'.</p>"
+        },
+        {
+          "id": "q-routing-lpm-s",
+          "after": "strong",
+          "topic": "routing",
+          "kind": "scenario",
+          "prompt": "A ping works one way but not the other. How do you find the cause, and what specific configuration error produces this?",
+          "checklist": [
+            {"text": "Treat the two directions as separate paths and test both explicitly.", "weight": 2},
+            {"text": "Check the far router's route back to the source subnet.", "weight": 2},
+            {"text": "A missing return route in a static design is the classic cause.", "weight": 2},
+            {"text": "The source address of any ICMP unreachable identifies the router that gave up.", "weight": 2}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>One-way failure means the forward path exists and the return path does not. Look at the far router's table for the source subnet: in static routing every subnet must be added on both sides, and an omission produces exactly this. The ICMP network-unreachable message is sourced from the router that gave up, which points you at the right device in one step.</p>"
+        }
+      ]
+    },
+    {
+      "id": "q-routing-loop",
+      "topic": "routing",
+      "kind": "conceptual",
+      "priority": 2,
+      "prompt": "Explain how a routing loop forms, how TTL limits the damage, and how you would recognise one.",
+      "checklist": [
+        {"text": "Two routers point at each other for the same destination, typically after a change or a convergence failure.", "weight": 2},
+        {"text": "TTL decrements per hop, so packets eventually die with ICMP time-exceeded rather than circulating forever.", "weight": 2},
+        {"text": "Symptoms: high latency, traceroute repeating the same addresses, intermittent failures.", "weight": 2},
+        {"text": "Prevention: consistent tables, summarisation discipline, and dynamic routing that converges.", "weight": 1}
+      ],
+      "min_to_pass": 0.65,
+      "reference": "<p>A loop is two routers each believing the other is the better path. TTL stops the damage by expiring, which produces ICMP time-exceeded and makes traceroute show the same hop repeatedly. The cause is almost always stale or inconsistent information — a convergence failure, a misconfigured static route, or a summarisation error — so the fix is data consistency, not hardware.</p>"
+    },
+    {
+      "id": "q-permissions-order",
+      "topic": "linux-permissions",
+      "kind": "conceptual",
+      "priority": 3,
+      "prompt": "Explain how Linux evaluates access to a file for a process, including everything that can say no.",
+      "checklist": [
+        {"text": "Identity first: real/effective UID and supplementary groups.", "weight": 2},
+        {"text": "Every directory component on the path must be searchable (x) by that identity.", "weight": 2},
+        {"text": "Mode bits are evaluated in owner, group, other order and stop at the first match — they are not additive.", "weight": 2},
+        {"text": "ACLs can grant or mask access beyond the mode bits.", "weight": 1},
+        {"text": "SELinux may deny even when the mode bits allow, and logs an AVC.", "weight": 2},
+        {"text": "The filesystem can also refuse: read-only mount, full disk, immutable attribute.", "weight": 1}
+      ],
+      "min_to_pass": 0.7,
+      "reference": "<p>The kernel evaluates the identity, then traversal of every parent directory, then the mode bits in owner/group/other order stopping at the first matching class, then any ACL entries and mask, then SELinux's domain-to-type check, and finally the filesystem's own constraints. Any link in that chain can return EACCES, and the error message names none of them — which is why namei -l, getfacl, ls -Z and ausearch are the four commands that end the guessing.</p>",
+      "followups": [
+        {
+          "id": "q-permissions-order-w",
+          "after": "weak",
+          "topic": "linux-permissions",
+          "kind": "scenario",
+          "prompt": "A file is -rw-r----- root:app and the process runs as app. Can it read the file, and why?",
+          "checklist": [
+            {"text": "Yes: the process is not the owner, so group bits apply, and group has r.", "weight": 2},
+            {"text": "Evaluation stops at the first matching class.", "weight": 2},
+            {"text": "Owner bits would only matter if the process were root.", "weight": 1}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>Yes. The process's primary group is app, which owns the group bits, so r grants read. The owner bits (rw) apply only to root here. This is why 'the file is owned by root, so the service cannot read it' is often wrong.</p>"
+        },
+        {
+          "id": "q-permissions-order-s",
+          "after": "strong",
+          "topic": "linux-permissions",
+          "kind": "scenario",
+          "prompt": "A service gets permission denied with correct mode bits. Walk me through how you prove SELinux is the cause rather than guessing.",
+          "checklist": [
+            {"text": "Read the AVC: ausearch -m avc -ts recent shows source and target contexts.", "weight": 2},
+            {"text": "ls -Z shows the file's type, and matchpathcon -V reports the expected one.", "weight": 2},
+            {"text": "Fix with restorecon, or semanage fcontext plus restorecon for a custom path.", "weight": 2},
+            {"text": "Never set permissive or disable SELinux to make it work.", "weight": 1}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>Get the denial from the audit log — it names the source context, the target context and the class, so there is nothing to infer. Compare the file's current type with what policy expects using ls -Z and matchpathcon -V. Then restorecon the path (or add an fcontext rule first if it is a custom location). Disabling SELinux removes a control rather than fixing a label.</p>"
+        }
+      ]
+    },
+    {
+      "id": "q-links",
+      "topic": "linux-permissions",
+      "kind": "conceptual",
+      "priority": 1,
+      "prompt": "What is the difference between a hard link and a symbolic link, and how can a symlink cause 'No such file or directory' for a file that exists?",
+      "checklist": [
+        {"text": "A hard link is another name for the same inode; the data is shared and deletions are reference-counted.", "weight": 2},
+        {"text": "A symlink is a file containing a path, resolved at access time, with its own inode.", "weight": 2},
+        {"text": "A dangling symlink, or one with a broken relative target, produces ENOENT even though the name appears in a listing.", "weight": 2},
+        {"text": "namei -l and readlink -f resolve the chain component by component.", "weight": 1}
+      ],
+      "min_to_pass": 0.65,
+      "reference": "<p>Hard links share an inode: same data, same permissions, no way to tell which name is 'the real one'. Symlinks store a path and are resolved on access, so a broken target or a moved relative link yields ENOENT while the link itself still lists fine. namei -l shows each component's resolution and readlink -f gives the resolved path, which is how you find the broken hop in a long path.</p>"
+    },
+    {
+      "id": "q-process-signals",
+      "topic": "linux-processes",
+      "kind": "conceptual",
+      "priority": 3,
+      "prompt": "You need to stop a misbehaving process. Walk me through your approach, including signals and systemd.",
+      "checklist": [
+        {"text": "Identify first: ps -eo with pid, user, start time and command, and confirm the PID has not been reused.", "weight": 2},
+        {"text": "Prefer SIGTERM for a graceful exit, then verify with ps -p.", "weight": 2},
+        {"text": "SIGKILL only if SIGTERM fails, because it skips cleanup and leaves locks and stale state.", "weight": 2},
+        {"text": "For a supervised service use systemctl, so the unit's stop timeout, ordering and restart policy apply.", "weight": 2},
+        {"text": "A D-state process cannot be killed; resolve the IO wait instead.", "weight": 1}
+      ],
+      "min_to_pass": 0.7,
+      "reference": "<p>Identify before acting: the PID, the user and the start time, because PIDs are recycled. Signal gracefully with SIGTERM and verify the process actually exited. Only escalate to SIGKILL if that fails, accepting the loss of cleanup. If the process belongs to a systemd unit, go through systemctl so the unit's stop semantics apply — otherwise Restart=always will simply bring it back mid-investigation. And if it is in D state, no signal will work; you must unblock the IO.</p>",
+      "followups": [
+        {
+          "id": "q-process-signals-w",
+          "after": "weak",
+          "topic": "linux-processes",
+          "kind": "command",
+          "prompt": "Which commands would you use to see why a service is failing, in order?",
+          "checklist": [
+            {"text": "systemctl status for the state and exit code.", "weight": 2},
+            {"text": "journalctl -u for the unit's messages, including the systemd-level ones.", "weight": 2},
+            {"text": "systemctl cat to see the effective unit and any drop-ins.", "weight": 1}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>systemctl status gives the state, the exit code and the last log lines; journalctl -u adds the full unit history including systemd's own messages; systemctl cat shows the unit plus drop-ins so you know the effective configuration rather than what you assume it is.</p>"
+        },
+        {
+          "id": "q-process-signals-s",
+          "after": "strong",
+          "topic": "linux-processes",
+          "kind": "scenario",
+          "prompt": "Load average is 40 but CPU is idle. Explain what you would check and what the likely cause is.",
+          "checklist": [
+            {"text": "Load counts runnable plus uninterruptible tasks, so high load with low CPU means blocked tasks.", "weight": 2},
+            {"text": "Check vmstat for the b column and iowait.", "weight": 2},
+            {"text": "Find D-state processes and their wchan to identify the blocked operation.", "weight": 2},
+            {"text": "Typical causes: storage stalls, a dead NFS mount, or frozen IO — not CPU starvation.", "weight": 2}
+          ],
+          "min_to_pass": 0.7,
+          "reference": "<p>Load average is not a CPU metric. High load with low CPU and high iowait means tasks are stuck in the kernel, so you look at the b column in vmstat and at the wchan of D-state processes. A dead NFS mount or failing storage is the usual answer, and adding CPU would do nothing at all.</p>"
+        }
+      ]
+    },
+    {
+      "id": "q-systemd",
+      "topic": "linux-processes",
+      "kind": "conceptual",
+      "priority": 2,
+      "prompt": "Explain how systemd manages a service and what you check when it will not start.",
+      "checklist": [
+        {"text": "A unit file describes how to run it, under which user, with dependencies and a restart policy.", "weight": 2},
+        {"text": "status gives state and exit code, journalctl gives the messages, cat gives the effective unit including drop-ins.", "weight": 2},
+        {"text": "Effective execution identity matters: User, Group and ExecStart from systemctl show.", "weight": 2},
+        {"text": "After editing a unit you must run daemon-reload, otherwise the old definition is used.", "weight": 2}
+      ],
+      "min_to_pass": 0.7,
+      "reference": "<p>systemd is PID 1 and owns service lifecycle. The unit declares execution, identity, dependencies and restart behaviour. When something fails, read the exit code and the last log lines from status, get the full history from journalctl, and confirm the effective unit and its drop-ins with cat and show. And remember daemon-reload after any unit edit, or you will debug a definition that is not in use.</p>"
+    }
+  ]
+}

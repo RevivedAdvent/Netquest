@@ -1,0 +1,113 @@
+{
+  "id": "case05",
+  "order": 5,
+  "title": "Half the subnet cannot reach the new server",
+  "module_id": "m1",
+  "difficulty": "core",
+  "tagline": "A server was renumbered after a migration. Hosts below .128 reach it; hosts above .128 do not. The mask is the villain.",
+  "environment": ["Newly migrated Fedora server", "Access switch with one flat VLAN", "40 workstations in the same physical segment", "Gateway 10.0.20.1"],
+  "topology": "workstations 10.0.20.10-.240 --[access switch, VLAN 20]--> gateway 10.0.20.1\nserver 10.0.20.130/25 on the same switch",
+  "symptoms": [
+    "Workstations with addresses below 10.0.20.128 can reach the server",
+    "Workstations with addresses above 10.0.20.128 cannot",
+    "The server can ping 10.0.20.11 but not 10.0.20.1",
+    "Nothing is logged on the switch, and the port shows no errors"
+  ],
+  "objectives": [
+    "Read the mask, not just the address, in ip output",
+    "Compute the subnet and broadcast for a given prefix length",
+    "Explain why a wrong mask produces a partial, address-dependent failure"
+  ],
+  "tools": ["ip -brief address", "ip route", "ip neigh", "arping", "ping", "tcpdump"],
+  "framework": [
+    "Which hosts fail and is there a pattern in their addresses?",
+    "What does the failing host think its own subnet is?",
+    "Is the gateway considered on-link by that host?"
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "label": "The server's own addressing",
+      "command": "ip -brief address show dev eth0; ip route",
+      "output": "eth0  UP  10.0.20.130/25\n\n10.0.20.128/25 dev eth0 proto kernel scope link src 10.0.20.130",
+      "insight": "The prefix is /25, so the server believes its subnet is 10.0.20.128-10.0.20.255 and its gateway 10.0.20.1 is off-link. Every other host on this segment uses /24.",
+      "requires": []
+    },
+    {
+      "id": "e2",
+      "label": "What a working host uses",
+      "command": "ip -brief address show dev eth0; ip route | head -3",
+      "output": "eth0  UP  10.0.20.11/24\n\ndefault via 10.0.20.1 dev eth0 proto static\n10.0.20.0/24 dev eth0 proto kernel scope link src 10.0.20.11",
+      "insight": "Working hosts use /24 with the gateway on-link. The mismatch between /25 and /24 is the entire defect: two different ideas of where the subnet ends.",
+      "requires": ["e1"]
+    },
+    {
+      "id": "e3",
+      "label": "Test from the server to a low and a high address",
+      "command": "ping -c2 10.0.20.11; echo ---; ping -c2 10.0.20.200",
+      "output": "PING 10.0.20.11 (10.0.20.11) 56(84) bytes of data.\n64 bytes from 10.0.20.11: icmp_seq=1 ttl=64 time=0.412 ms\n---\nPING 10.0.20.200 (10.0.20.200) 56(84) bytes of data.\nFrom 10.0.20.130 icmp_seq=1 Destination Host Unreachable",
+      "insight": "10.0.20.11 is inside 10.0.20.128/25? No — and yet it works, because the server ARPs and gets an answer on the shared segment. 10.0.20.200 fails with ARP-level unreachability, showing it is a Layer 2 adjacency judgement, not a routing failure.",
+      "requires": ["e2"]
+    },
+    {
+      "id": "e4",
+      "label": "The gateway test that decides it",
+      "command": "ping -c2 10.0.20.1; ip route get 203.0.113.20",
+      "output": "From 10.0.20.130 icmp_seq=1 Destination Host Unreachable\n\n203.0.113.20 via 10.0.20.1 dev eth0 src 10.0.20.130 uid 1000\n    cache\n    (no route error, but ARP for 10.0.20.1 will fail)",
+      "insight": "The server thinks the gateway is a directly reachable neighbour and ARPs for it. No host owns 10.0.20.1 in the 10.0.20.128/25 range, so ARP fails and everything off-link dies.",
+      "requires": ["e3"]
+    },
+    {
+      "id": "e5",
+      "label": "Confirm with a neighbour table",
+      "command": "ip neigh show dev eth0",
+      "output": "10.0.20.11 lladdr 52:54:00:11:22:33 REACHABLE\n10.0.20.1  lladdr 52:54:00:aa:bb:cc FAILED\n10.0.20.200  FAILED",
+      "insight": "FAILED entries prove the server is trying to reach these addresses directly on the wire and nobody answers. A router would have replied; here there is no router because the mask excludes one.",
+      "requires": ["e4"]
+    },
+    {
+      "id": "e6",
+      "label": "Watch the ARP attempts",
+      "command": "sudo tcpdump -ni eth0 arp and host 10.0.20.1 -c4",
+      "output": "10:31:02.101 ARP, Request who-has 10.0.20.1 tell 10.0.20.130, length 28\n10:31:03.108 ARP, Request who-has 10.0.20.1 tell 10.0.20.130, length 28\n10:31:04.115 ARP, Request who-has 10.0.20.1 tell 10.0.20.130, length 28",
+      "insight": "Repeated ARP requests for the gateway with no reply. The server is not routing; it is shouting on the local segment for an address that lives on another subnet.",
+      "requires": ["e5"]
+    }
+  ],
+  "hypotheses": [
+    {"text": "The switch has a MAC table problem affecting some addresses.", "verdict": "rejected", "why": "Which hosts fail correlates exactly with address ranges, not with ports, and the switch reports no errors."},
+    {"text": "The server's subnet mask is /25 instead of /24, so it misjudges which addresses are on-link.", "verdict": "accepted", "why": "eth0 is 10.0.20.130/25, the gateway is outside that range, and ARP for 10.0.20.1 and 10.0.20.200 never resolves."},
+    {"text": "A firewall is blocking traffic between address ranges.", "verdict": "rejected", "why": "The failures happen at ARP resolution, before any firewall could evaluate a packet."},
+    {"text": "The default route is missing.", "verdict": "rejected", "why": "A default route exists; it is unusable because its next hop is wrongly considered on-link."}
+  ],
+  "min_evidence": 3,
+  "diagnosis_accept": ["/25", "mask", "netmask", "prefix length", "subnet mask is wrong"],
+  "diagnosis_reject": ["firewall", "switch failure", "mac table", "cable", "the gateway is down", "dns"],
+  "solution": {
+    "root_cause": "The server was configured with 10.0.20.130/25 instead of 10.0.20.130/24. Its own subnet is therefore 10.0.20.128-255, which places the gateway 10.0.20.1 and the lower half of the segment outside its subnet. The server ARPs for those addresses directly on the wire, nobody answers, and every off-link flow fails with 'Destination Host Unreachable'.",
+    "resolution": "Correct the prefix to /24 so the connected route becomes 10.0.20.0/24 and the gateway is treated as an on-link next hop. With NetworkManager use nmcli con modify <con> ipv4.addresses 10.0.20.130/24 and reactivate, rather than editing a file that a profile may overwrite.",
+    "verification": "ip route shows 10.0.20.0/24 as the connected route; ip route get 203.0.113.20 resolves via 10.0.20.1; ping to the gateway and to a host above .128 both succeed; and hosts in both halves of the segment reach the server. Confirm from the other direction too, not only from the server.",
+    "lessons": [
+      "An address without a mask is half a fact. Always read the prefix.",
+      "Address-dependent failures usually mean an on-link/off-link disagreement, not a policy.",
+      "FAILED neighbour entries localise the problem to Layer 2 adjacency in one command."
+    ],
+    "interview_followups": [
+      "What is the broadcast address of 10.0.20.130/25, and of /24?",
+      "How does the host decide whether to ARP for a destination or send to the gateway?",
+      "Why did some hosts still work, even though the server's mask was wrong?"
+    ]
+  },
+  "resolution_options": [
+    {"text": "Change the server's prefix from /25 to /24", "correct": true, "why": "Restores the intended connected route and makes the gateway an on-link next hop again."},
+    {"text": "Add a static route for 10.0.20.0/24 via 10.0.20.1", "correct": false, "why": "The address is inside that subnet anyway, so the local /25 route still wins; it does not fix the on-link judgement."},
+    {"text": "Ask the network team to move all hosts into 10.0.20.128/25", "correct": false, "why": "Renumbering 40 hosts to accommodate one wrong mask inverts the cost."},
+    {"text": "Add an ARP proxy entry", "correct": false, "why": "A workaround at the wrong layer that leaves the configuration error in place."},
+    {"text": "Reboot the server", "correct": false, "why": "The configuration is persistent; a reboot reproduces the same state."}
+  ],
+  "interview_questions": [
+    {"q": "How does a host decide whether to ARP for a destination?", "a": "It applies its own mask to the destination. If the result equals its own network, the destination is on-link and it ARPs directly. Otherwise it ARPs for the gateway. A wrong mask therefore changes the decision itself, not just the routing table."},
+    {"q": "A host can ping some machines but not others in 'the same subnet'. What do you check first?", "a": "The mask on both ends and the resulting connected route. Then ip neigh to see whether ARP is failing, which proves the on-link judgement is wrong."},
+    {"q": "Why can a wrong mask still allow partial communication?", "a": "The shared Layer 2 segment does not care about masks: if the sender ARPs and the target answers, traffic flows. So only addresses that the mask classifies as off-link break, producing an address-dependent pattern."}
+  ]
+}

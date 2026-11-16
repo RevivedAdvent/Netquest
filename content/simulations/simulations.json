@@ -1,0 +1,336 @@
+{
+  "simulations": [
+    {
+      "id": "switching",
+      "title": "Layer 2 Switching Lab",
+      "module_id": "m2",
+      "tagline": "MAC learning, flooding, filtering and VLAN isolation.",
+      "summary": "An eight-port switch with six hosts across two VLANs. Send frames and watch the MAC address table be built from source addresses, then see each forwarding decision explained.",
+      "minutes": 15,
+      "kind": "network",
+      "simplifications": [
+        "A single switch; no STP, no trunking, no inter-switch links.",
+        "No FCS errors, no auto-negotiation, no buffering or head-of-line blocking.",
+        "Aging is modelled but accelerated: entries expire after a fixed number of frames rather than 300 seconds.",
+        "Cross-VLAN traffic is shown as impossible at Layer 2, which is the correct model but does not show the router that would fix it."
+      ],
+      "learn": [
+        "The MAC table is built from source addresses only.",
+        "The forwarding decision uses the destination address: forward, flood or filter.",
+        "Broadcast and unknown unicast are flooded inside one VLAN, never across VLANs."
+      ],
+      "assessment": [
+        {
+          "id": "q-simsw-1",
+          "type": "mcq",
+          "prompt": "PC-A (VLAN 10) sends its first frame to PC-B (VLAN 10). What does the switch do?",
+          "options": [
+            "Floods it to every port including VLAN 20",
+            "Floods it to all VLAN 10 ports except the ingress port",
+            "Drops it because the destination is unknown",
+            "Forwards it only to PC-B's port"
+          ],
+          "answer": 1,
+          "explanation": "Unknown unicast is flooded within the VLAN so the destination can answer and teach the switch its location. Other VLANs never see it.",
+          "why_wrong": {
+            "3": "The switch cannot know PC-B's port before PC-B has spoken.",
+            "2": "Dropping would make the first frame of every conversation fail.",
+            "0": "VLANs are separate broadcast domains; flooding never crosses them."
+          }
+        },
+        {
+          "id": "q-simsw-2",
+          "type": "mcq",
+          "prompt": "PC-C (VLAN 20) is connected to the same switch as PC-A (VLAN 10). Why can they not exchange frames?",
+          "options": [
+            "Their MAC addresses conflict",
+            "The frames are larger than the MTU",
+            "The switch has learned both MACs and filters them",
+            "They are in different broadcast domains, so flooding and learning are scoped per VLAN"
+          ],
+          "answer": 3,
+          "explanation": "VLAN membership limits both flooding and the usable MAC table scope, so traffic between them must be routed.",
+          "why_wrong": {
+            "2": "Filtering is about the ingress port, not the VLAN.",
+            "0": "There is no MAC conflict in the scenario.",
+            "1": "MTU is unrelated to VLAN isolation."
+          }
+        },
+        {
+          "id": "q-simsw-3",
+          "type": "self",
+          "prompt": "Describe the exact state of the MAC table after these three frames: (1) A sends to B, (2) B replies to A, (3) A broadcasts.",
+          "checklist": [
+            {
+              "text": "After frame 1 the table contains only A's MAC mapped to its ingress port.",
+              "weight": 2
+            },
+            {
+              "text": "After frame 2 the table contains B mapped to its port as well.",
+              "weight": 2
+            },
+            {
+              "text": "Frame 1 is flooded; frame 2 is forwarded to one port; frame 3 is flooded.",
+              "weight": 2
+            },
+            {
+              "text": "The broadcast in frame 3 refreshes A's entry but adds no new destination entry.",
+              "weight": 1
+            }
+          ],
+          "reference": "<p>Learning always happens from the source before the forwarding decision. Frame 1: learn A, destination unknown, flood. Frame 2: learn B (from B's source), destination A is known, forward out one port. Frame 3: refresh A's entry, destination is broadcast, flood. A broadcast does not add an entry for the broadcast address, because there is nothing to learn from a broadcast destination.</p>",
+          "min_to_pass": 0.7
+        }
+      ]
+    },
+    {
+      "id": "dhcp",
+      "title": "DHCP DORA Simulator",
+      "module_id": "m3",
+      "tagline": "Step through the four messages, then break it.",
+      "summary": "Walk the DORA exchange message by message with ports, addressing and broadcast behaviour, then inject six different faults and diagnose the resulting symptom.",
+      "minutes": 20,
+      "kind": "protocol",
+      "simplifications": [
+        "One client, one server and one relay; no lease database or pool accounting beyond a fixed free count.",
+        "Offer selection between multiple servers is described, not simulated.",
+        "Message option lists are representative, not exhaustive.",
+        "Renewal timers (T1/T2) are explained in the panel rather than animated."
+      ],
+      "learn": [
+        "DISCOVER and REQUEST are broadcast because the client has no usable address.",
+        "The relay's giaddr is what selects the scope.",
+        "A missing option 3 or 6 produces a very specific, recognisable symptom."
+      ],
+      "assessment": [
+        {
+          "id": "q-simdhcp-1",
+          "type": "mcq",
+          "prompt": "Which DHCP message carries the subnet mask, gateway and DNS servers to the client?",
+          "options": [
+            "DHCPACK",
+            "DHCPREQUEST",
+            "DHCPOFFER",
+            "DHCPDISCOVER"
+          ],
+          "answer": 0,
+          "explanation": "The ACK commits the lease and carries the option set. The OFFER also contains options, but the ACK is the authoritative one that the client applies.",
+          "why_wrong": {
+            "3": "The client's request carries no options for the server to apply.",
+            "2": "The OFFER proposes options, but the client only applies the acknowledged set.",
+            "1": "The REQUEST selects a server and requests specific options."
+          }
+        },
+        {
+          "id": "q-simdhcp-2",
+          "type": "mcq",
+          "prompt": "A client receives an address and can ping its local subnet, but cannot reach anything else. Which fault matches?",
+          "options": [
+            "DHCP server unavailable",
+            "Incorrect option 6 (DNS)",
+            "Incorrect or missing option 3 (default gateway)",
+            "Pool exhausted"
+          ],
+          "answer": 2,
+          "explanation": "Local connectivity proves the address and mask are usable; failing off-link traffic points at the gateway option.",
+          "why_wrong": {
+            "0": "No server means no lease at all.",
+            "3": "Exhaustion means no address, not a broken gateway.",
+            "1": "Bad DNS breaks names, not IP reachability."
+          }
+        },
+        {
+          "id": "q-simdhcp-3",
+          "type": "self",
+          "prompt": "Explain why the client broadcasts its REQUEST even after receiving an OFFER, and what would break if it did not.",
+          "checklist": [
+            {
+              "text": "Multiple servers may have offered; the broadcast tells the others their offer was declined.",
+              "weight": 2
+            },
+            {
+              "text": "Otherwise those servers would hold reservations for unclaimed addresses.",
+              "weight": 2
+            },
+            {
+              "text": "The REQUEST names the selected server via the server identifier option.",
+              "weight": 1
+            },
+            {
+              "text": "Broadcast also avoids needing an IP-level path before the lease is confirmed.",
+              "weight": 1
+            }
+          ],
+          "reference": "<p>DHCP is a two-phase commit because offers can be plural. The broadcast REQUEST serves as a public decline notice: every server that offered hears which one was chosen and can return its address to the pool. Without it, offers would silently hold addresses, pools would appear exhausted, and the same address could be promised twice. The client identifies the winner with the server identifier option, so the message is specific even though its transport is broadcast.</p>",
+          "min_to_pass": 0.7
+        }
+      ]
+    },
+    {
+      "id": "dns",
+      "title": "DNS Resolution Laboratory",
+      "module_id": "m3",
+      "tagline": "Hosts file, cache, hierarchy, then answers or failures.",
+      "summary": "Resolve names against a controlled local dataset. Watch the hosts file and cache shortcuts, follow referrals from root to authoritative, and inject NXDOMAIN, SERVFAIL, timeout and stale-cache faults.",
+      "minutes": 25,
+      "kind": "protocol",
+      "simplifications": [
+        "A fixed three-level hierarchy (root, TLD, one authoritative server) with no DNSSEC validation.",
+        "No EDNS, no TCP fallback and no TTL drift: a cached answer either hits or has expired.",
+        "Search domains are applied explicitly by the scenario rather than by ndots rules.",
+        "Every query is answered from the local dataset; no real DNS traffic is generated."
+      ],
+      "learn": [
+        "The hosts file and resolver cache can satisfy a lookup without any hierarchy walk.",
+        "NXDOMAIN, SERVFAIL and timeout are three different failures with different causes.",
+        "TTL determines how long a wrong answer can persist after a change."
+      ],
+      "assessment": [
+        {
+          "id": "q-simdns-1",
+          "type": "mcq",
+          "prompt": "A query is answered from the resolver cache. Which steps are skipped?",
+          "options": [
+            "None; every lookup walks the hierarchy",
+            "The hosts file check",
+            "The root, TLD and authoritative queries",
+            "The client's stub resolver call"
+          ],
+          "answer": 2,
+          "explanation": "A cache hit returns the cached record with the remaining TTL; the iterative walk never happens.",
+          "why_wrong": {
+            "1": "The hosts file is checked first by NSS regardless of cache.",
+            "3": "The client still asks its resolver.",
+            "0": "That would make the cache useless."
+          }
+        },
+        {
+          "id": "q-simdns-2",
+          "type": "mcq",
+          "prompt": "A client uses 1.1.1.1 as its resolver and an internal name fails, but the internal resolver answers correctly. What is this?",
+          "options": [
+            "Split-horizon DNS: the internal name only exists in the internal view",
+            "A DNSSEC failure",
+            "A TTL problem",
+            "Negative caching"
+          ],
+          "answer": 0,
+          "explanation": "The name exists only in the internal zone, so an external resolver has no record for it.",
+          "why_wrong": {
+            "3": "Negative caching implies the answer was once correct from that resolver.",
+            "2": "TTL affects persistence, not existence.",
+            "1": "DNSSEC failures produce SERVFAIL, not a clean NXDOMAIN from a public resolver."
+          }
+        },
+        {
+          "id": "q-simdns-3",
+          "type": "self",
+          "prompt": "You change an A record. Explain what different clients will see over the next hour and why.",
+          "checklist": [
+            {
+              "text": "Clients whose resolver cache already holds the old record keep using it until the old TTL expires.",
+              "weight": 2
+            },
+            {
+              "text": "Clients with an empty cache see the new value immediately (after the zone is updated).",
+              "weight": 2
+            },
+            {
+              "text": "Negative caching can make a newly created name look absent until the SOA minimum expires.",
+              "weight": 1
+            },
+            {
+              "text": "The bounded persistence is what people loosely call propagation.",
+              "weight": 1
+            }
+          ],
+          "reference": "<p>DNS answers are cached for their TTL, so immediately after a change some clients see the old value and some see the new one. Without a cache, the new record is visible at once. Names that previously did not exist may remain invisible for the SOA minimum because the NXDOMAIN was cached. Lowering the TTL before a planned change shortens the window, which is the professional practice.</p>",
+          "min_to_pass": 0.7
+        }
+      ]
+    },
+    {
+      "id": "routing",
+      "title": "Routing Path and Longest Prefix Match",
+      "module_id": "m5",
+      "tagline": "One decision per hop, most specific wins.",
+      "summary": "Pick a destination and watch each router consult its table. See longest prefix match highlighted entry by entry, then inject missing defaults, wrong next hops and routing loops.",
+      "minutes": 20,
+      "kind": "network",
+      "simplifications": [
+        "Static tables only; no protocol convergence or dynamic updates.",
+        "Two or three hops, so loops are visible within a short trace.",
+        "Each router uses one main table, with no policy routing or VRFs.",
+        "Metrics are illustrative and are only compared within the same prefix."
+      ],
+      "learn": [
+        "Prefix length is compared before metric, always.",
+        "A route without a next hop means the destination is on-link.",
+        "A loop is visible as repeated hops and TTL exhaustion."
+      ],
+      "assessment": [
+        {
+          "id": "q-simroute-1",
+          "type": "mcq",
+          "prompt": "Router R1 has 10.0.0.0/8 via 192.0.2.2 (metric 10) and 10.1.0.0/16 via 192.0.2.3 (metric 200). Where does a packet to 10.1.5.5 go?",
+          "options": [
+            "dropped",
+            "via 192.0.2.2",
+            "to both",
+            "via 192.0.2.3"
+          ],
+          "answer": 3,
+          "explanation": "Longest prefix match selects /16 regardless of its worse metric.",
+          "why_wrong": {
+            "1": "That is the /8 route, used only for 10.x outside 10.1.0.0/16.",
+            "0": "A matching route exists.",
+            "2": "One route is selected per packet."
+          }
+        },
+        {
+          "id": "q-simroute-2",
+          "type": "mcq",
+          "prompt": "What is the immediate effect of removing the default route from an edge router?",
+          "options": [
+            "Nothing, because more specific routes still exist",
+            "All destinations not covered by a more specific route become unreachable",
+            "The router floods the packet",
+            "Traffic is sent to the last used gateway"
+          ],
+          "answer": 1,
+          "explanation": "0.0.0.0/0 is the catch-all; without it, any destination outside the table is 'network unreachable'.",
+          "why_wrong": {
+            "0": "It breaks exactly the traffic that relied on the catch-all.",
+            "3": "Routers do not remember a previous gateway for that purpose.",
+            "2": "Routers do not flood IP packets."
+          }
+        },
+        {
+          "id": "q-simroute-3",
+          "type": "self",
+          "prompt": "Explain how a routing loop forms and why TTL eventually saves the network.",
+          "checklist": [
+            {
+              "text": "Each router believes the other is the better path because of stale or inconsistent information.",
+              "weight": 2
+            },
+            {
+              "text": "Each hop decrements TTL, so the loop terminates with ICMP time-exceeded rather than running forever.",
+              "weight": 2
+            },
+            {
+              "text": "Symptoms: high latency, traceroute repeating addresses, ICMP time-exceeded errors.",
+              "weight": 1
+            },
+            {
+              "text": "Cause is usually a convergence failure or a misconfigured static route, not a hardware fault.",
+              "weight": 1
+            }
+          ],
+          "reference": "<p>A loop forms when two routers each point at the other for the same destination — typically after a link change where one router still holds stale information. Packets bounce between them, TTL decrements at every hop, and at zero the router returns ICMP time-exceeded. So the network does not melt down, but the destination is unreachable and each failed flow costs many packets. Prevention is convergence and sanity checks: consistent tables, and verification with ip route get and traceroute.</p>",
+          "min_to_pass": 0.7
+        }
+      ]
+    }
+  ]
+}

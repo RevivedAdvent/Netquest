@@ -1,0 +1,725 @@
+{
+  "labs": [
+    {
+      "id": "ss",
+      "command": "ss",
+      "group": "Connectivity testing",
+      "module_id": "m4",
+      "tagline": "Which sockets exist, and what state are they in?",
+      "problem": "Determine whether a service is listening, on which address, and what state every connection is in.",
+      "how": "Reads socket information directly from netlink. Replaces netstat and is much faster on hosts with many sockets.",
+      "syntax": "ss [options] [filter]",
+      "flags": [
+        {
+          "flag": "-l",
+          "why": "Listening sockets only — the 'is it up?' view."
+        },
+        {
+          "flag": "-t / -u",
+          "why": "TCP or UDP only."
+        },
+        {
+          "flag": "-n",
+          "why": "Numeric ports and addresses; avoids lookups."
+        },
+        {
+          "flag": "-p",
+          "why": "Show the owning process (needs privileges for other users' sockets)."
+        },
+        {
+          "flag": "-i",
+          "why": "TCP internal info: rtt, retransmits, cwnd — invaluable for latency."
+        },
+        {
+          "flag": "filter",
+          "why": "e.g. '( sport = :443 )' or 'dst 1.1.1.1'."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "ss -ltnp",
+          "note": "What is listening, on which address, with process names."
+        },
+        {
+          "cmd": "ss -tan state established",
+          "note": "Active connections only."
+        },
+        {
+          "cmd": "ss -ti dst 10.0.0.5",
+          "note": "Retransmissions and RTT for one peer."
+        },
+        {
+          "cmd": "ss -tan | awk 'NR>1{print $1}' | sort | uniq -c | sort -rn",
+          "note": "State census on a busy server."
+        }
+      ],
+      "sample": "$ ss -ltnp\nState  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process\nLISTEN 0      128    0.0.0.0:22            0.0.0.0:*         users:((\"sshd\",pid=812,fd=3))\nLISTEN 0      511    127.0.0.1:5432        0.0.0.0:*         users:((\"postgres\",pid=1204,fd=7))\nLISTEN 0      511    [::]:443               [::]:*            users:((\"nginx\",pid=1330,fd=8))",
+      "read": [
+        "Local Address shows the bind address: 0.0.0.0 (all IPv4), [::] (all IPv6), or a specific address.",
+        "A socket bound to 127.0.0.1 is unreachable from other hosts no matter what the firewall allows.",
+        "Recv-Q growing on a LISTEN socket can indicate an application not accepting connections fast enough.",
+        "States: LISTEN, ESTAB, SYN-SENT, SYN-RECV, TIME-WAIT, CLOSE-WAIT. Persistently many CLOSE-WAIT means an application leaking sockets; many TIME-WAIT is normal for the closing side."
+      ],
+      "mistakes": [
+        "Forgetting -p, then not knowing which process owns the port.",
+        "Reading ESTAB as proof the application is healthy — it only proves a TCP connection exists.",
+        "Ignoring the bind address column and concluding 'it is listening' means 'it is reachable'."
+      ],
+      "when": "Whenever 'the port is closed', 'connections are hanging', or a server is running out of sockets.",
+      "followups": [
+        "sudo ss -ti",
+        "curl -v host:port",
+        "journalctl -u SERVICE"
+      ],
+      "try": {
+        "scenario": "Inventory listening TCP sockets and their owning processes, and count socket states.",
+        "task": "List listeners with process names, then summarise connection states.",
+        "command": "ss -ltnp; echo ---; ss -tan | awk 'NR>1 {print $1}' | sort | uniq -c | sort -rn",
+        "expected_patterns": [
+          {
+            "pattern": "(?m)^LISTEN",
+            "label": "at least one LISTEN socket"
+          },
+          {
+            "pattern": "users:\\(\\(|\\(\\(\\\"",
+            "label": "process information from -p"
+          },
+          {
+            "pattern": "(?m)^\\s*\\d+\\s+(ESTAB|TIME-WAIT|LISTEN|CLOSE-WAIT|SYN-SENT)",
+            "label": "the state census"
+          }
+        ],
+        "verdict_ok": "You have listeners plus a state census — the standard baseline for a socket investigation.",
+        "verdict_missing": "Paste the LISTEN table and the state counts; the census needs the awk/sort pipeline output."
+      },
+      "simulate": {
+        "intro": "A remote user cannot reach PostgreSQL on port 5432. Read the output.",
+        "terminal": "$ ss -ltnp\nState  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process\nLISTEN 0      128    0.0.0.0:22            0.0.0.0:*         users:((\"sshd\",pid=812,fd=3))\nLISTEN 0      511    127.0.0.1:5432        0.0.0.0:*         users:((\"postgres\",pid=1204,fd=7))\nLISTEN 0      511    [::]:443               [::]:*            users:((\"nginx\",pid=1330,fd=8))",
+        "questions": [
+          {
+            "id": "lab-ss-s1",
+            "prompt": "Why can a remote client not connect to 5432?",
+            "options": [
+              "The client is using IPv6",
+              "PostgreSQL is not running",
+              "Port 5432 is closed by the firewall",
+              "PostgreSQL is bound to 127.0.0.1 only, so it never accepts traffic from the network"
+            ],
+            "answer": 3,
+            "explanation": "The bind address is the loopback, so packets arriving on the external interface have no listener — the kernel sends RST.",
+            "why_wrong": {
+              "2": "A firewall DROP would give a timeout; and the binding already explains refusal.",
+              "1": "It is running (pid 1204).",
+              "0": "The bind address excludes all external families here."
+            }
+          },
+          {
+            "id": "lab-ss-s2",
+            "prompt": "What would the client see if a firewall dropped the traffic instead?",
+            "options": [
+              "A hang ending in 'connection timed out'",
+              "A DNS error",
+              "Immediate 'connection refused'",
+              "'No route to host'"
+            ],
+            "answer": 0,
+            "explanation": "DROP produces silence, so the client waits and times out. RST produces immediate refusal.",
+            "why_wrong": {
+              "2": "That is what RST gives.",
+              "3": "That implies a routing/ICMP unreachable.",
+              "1": "No name resolution occurs at that stage."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "A web server has thousands of connections in CLOSE-WAIT and memory keeps rising.",
+        "question": "What is the most likely cause?",
+        "options": [
+          "The kernel is misconfigured",
+          "The client is retransmitting",
+          "The application is not closing sockets, so descriptors accumulate and exhaust limits",
+          "A SYN flood"
+        ],
+        "answer": 2,
+        "explanation": "CLOSE-WAIT means the peer closed and the local application has not called close(). The bug is in the application.",
+        "why_wrong": {
+          "3": "SYN floods create SYN-RECV, not CLOSE-WAIT.",
+          "0": "The state has a specific meaning at the application layer.",
+          "1": "Retransmissions show in ss -ti, not as CLOSE-WAIT."
+        }
+      }
+    },
+    {
+      "id": "netstat",
+      "command": "netstat",
+      "group": "Connectivity testing",
+      "module_id": "m4",
+      "tagline": "The legacy tool — know it, prefer ss.",
+      "problem": "You are on a machine where net-tools is installed and ss is not, and you still need socket and route data.",
+      "how": "Reads /proc/net. Slower than ss and deprecated on Fedora (net-tools is not installed by default).",
+      "syntax": "netstat [options]",
+      "flags": [
+        {
+          "flag": "-t / -u",
+          "why": "TCP or UDP."
+        },
+        {
+          "flag": "-l",
+          "why": "Listening."
+        },
+        {
+          "flag": "-n",
+          "why": "Numeric."
+        },
+        {
+          "flag": "-p",
+          "why": "Process. Note: -p on netstat also sets promiscuous mode semantics historically; here it shows PIDs."
+        },
+        {
+          "flag": "-r",
+          "why": "Routing table (use ip route instead)."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "netstat -tlnp",
+          "note": "Equivalent of ss -ltnp."
+        },
+        {
+          "cmd": "netstat -i",
+          "note": "Interface statistics (use ip -s link)."
+        },
+        {
+          "cmd": "netstat -rn",
+          "note": "Routing table (use ip route)."
+        }
+      ],
+      "sample": "$ netstat -tlnp\nProto Recv-Q Send-Q Local Address      Foreign Address    State    PID/Program name\ntcp        0      0 0.0.0.0:22         0.0.0.0:*          LISTEN   812/sshd\ntcp        0      0 127.0.0.1:5432     0.0.0.0:*          LISTEN   1204/postgres",
+      "read": [
+        "Same information as ss, different layout: Proto, Recv-Q, Send-Q, Local Address, Foreign Address, State, PID/Program.",
+        "The PID/Program column needs root for other users' sockets, exactly like ss -p.",
+        "The mapping to modern tools: netstat -tlnp = ss -ltnp, netstat -rn = ip route, netstat -i = ip -s link."
+      ],
+      "mistakes": [
+        "Assuming netstat is installed on Fedora — it is a separate package (net-tools) that is no longer default.",
+        "Using netstat on hosts with huge socket tables; it is significantly slower than ss.",
+        "Writing new scripts against netstat output."
+      ],
+      "when": "Only when ss is unavailable. Otherwise use ss.",
+      "followups": [
+        "ss -ltnp",
+        "ip route"
+      ],
+      "try": {
+        "scenario": "Check whether net-tools exists on your system, and capture the ss equivalent of the same query.",
+        "task": "Test for netstat, then run the modern equivalent either way.",
+        "command": "command -v netstat && netstat -tlnp | head -5 || echo 'net-tools not installed'; echo ---; ss -ltnp | head -5",
+        "expected_patterns": [
+          {
+            "pattern": "(net-tools not installed|Proto Recv-Q Send-Q|LISTEN)",
+            "label": "either a clear absence message or listener output"
+          },
+          {
+            "pattern": "(?m)^LISTEN",
+            "label": "the ss listener table"
+          }
+        ],
+        "verdict_ok": "You established tool availability and produced the modern equivalent.",
+        "verdict_missing": "Paste both parts; the point is the presence/absence of netstat plus the ss output."
+      },
+      "simulate": {
+        "intro": "Translate this legacy output into the modern equivalents.",
+        "terminal": "$ netstat -rn\nKernel IP routing table\nDestination   Gateway         Genmask         Flags Metric Iface\n0.0.0.0       10.0.0.1        0.0.0.0         UG    100    eth0\n10.0.0.0      0.0.0.0         255.255.255.0   U     100    eth0",
+        "questions": [
+          {
+            "id": "lab-netstat-s1",
+            "prompt": "Which modern command shows the same routing information?",
+            "options": [
+              "dig",
+              "ip neigh",
+              "ip route",
+              "ss -rn"
+            ],
+            "answer": 2,
+            "explanation": "ip route prints the same table with clearer semantics (cisco-style flags are gone).",
+            "why_wrong": {
+              "3": "ss has no routing table view.",
+              "1": "That is the ARP cache.",
+              "0": "That is DNS."
+            }
+          },
+          {
+            "id": "lab-netstat-s2",
+            "prompt": "What does the UG flag mean on the first line?",
+            "options": [
+              "Route is Up and uses a Gateway — i.e. the default route",
+              "Route is Unicast and Generic",
+              "Route is Unreachable and Global",
+              "Route uses UDP and GRE"
+            ],
+            "answer": 0,
+            "explanation": "U = up, G = gateway. The destination 0.0.0.0 with a gateway is the default route.",
+            "why_wrong": {
+              "2": "U means up, not unreachable.",
+              "3": "Flags are not protocols.",
+              "1": "Not the historical meaning."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "A runbook tells you to run `netstat -tlnp` on a fresh Fedora 45 server and it fails with 'command not found'.",
+        "question": "What is the correct response?",
+        "options": [
+          "Conclude the system is broken",
+          "Run the runbook on another OS",
+          "Install net-tools and never mention ss",
+          "Use ss -ltnp — net-tools is not installed by default, and installing it is unnecessary"
+        ],
+        "answer": 3,
+        "explanation": "ss is the supported replacement and is present by default. Updating the runbook is the durable fix.",
+        "why_wrong": {
+          "2": "Adds a dependency for no benefit.",
+          "0": "Nothing is broken.",
+          "1": "Unnecessary workaround."
+        }
+      }
+    },
+    {
+      "id": "tcpdump",
+      "command": "tcpdump",
+      "group": "Packet capture",
+      "module_id": "m4",
+      "tagline": "Ground truth for 'are packets actually flowing?'",
+      "problem": "Settle definitively whether traffic leaves, arrives, or is answered — and identify the TCP-level failure.",
+      "how": "Uses libpcap to copy frames from the interface into user space, filtered by a BPF expression. Requires root or CAP_NET_RAW.",
+      "syntax": "tcpdump -i IFACE [filter] [-c COUNT] [-n] [-w FILE]",
+      "flags": [
+        {
+          "flag": "-i IFACE",
+          "why": "Interface, or 'any' where supported."
+        },
+        {
+          "flag": "-c N",
+          "why": "Stop after N packets. Always bound a capture."
+        },
+        {
+          "flag": "-n / -nn",
+          "why": "No name/port resolution. Faster and avoids surprise DNS."
+        },
+        {
+          "flag": "-e",
+          "why": "Show link-layer headers (MAC addresses)."
+        },
+        {
+          "flag": "-w FILE",
+          "why": "Write a pcap instead of flooding the terminal."
+        },
+        {
+          "flag": "-A / -X",
+          "why": "Payload as ASCII / hex+ASCII. Be careful with sensitive data."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "sudo tcpdump -i eth0 -n -c 20 'tcp port 443 and host 203.0.113.20'",
+          "note": "One connection, bounded."
+        },
+        {
+          "cmd": "sudo tcpdump -i eth0 -n -e -c 20 arp",
+          "note": "Is the gateway answering ARP?"
+        },
+        {
+          "cmd": "sudo tcpdump -i any -n -c 40 'port 53'",
+          "note": "DNS traffic across all interfaces."
+        }
+      ],
+      "sample": "$ sudo tcpdump -i eth0 -n -c 4 'tcp port 443 and host 203.0.113.20'\n12:04:11.104231 IP 10.20.30.44.51234 > 203.0.113.20.443: Flags [S], seq 1, win 64240\n12:04:11.112004 IP 203.0.113.20.443 > 10.20.30.44.51234: Flags [S.], seq 2, ack 2\n12:04:11.112233 IP 10.20.30.44.51234 > 203.0.113.20.443: Flags [.], ack 2\n12:04:11.140881 IP 10.20.30.44.51234 > 203.0.113.20.443: Flags [P.], seq 2:518, ack 2",
+      "read": [
+        "S, S., . is a complete handshake. S repeated with no reply means packets leave and nothing returns.",
+        "S followed by R means refusal. S followed by ICMP unreachable means no route or an administrative block.",
+        "Repeated identical sequence numbers indicate retransmission, i.e. loss in one direction.",
+        "An R mid-session means something tore down an established connection: firewall state, idle timeout, or a crash."
+      ],
+      "mistakes": [
+        "Capturing without a count or filter on a busy link — you can fill the disk or lose the terminal.",
+        "Pasting raw captures into tickets without redacting addresses and payloads.",
+        "Running captures on the wrong interface (the VPN's tun0 rather than eth0), then concluding nothing is happening."
+      ],
+      "when": "When logs and counters are inconclusive and you need packet-level evidence.",
+      "followups": [
+        "ss -tan",
+        "curl -v",
+        "ip neigh"
+      ],
+      "try": {
+        "scenario": "Capture a bounded DNS exchange while making one lookup, and identify whether responses come back.",
+        "task": "Start a short capture filtered to port 53 in one terminal, make a lookup, and paste the capture.",
+        "command": "sudo tcpdump -i any -n -c 6 'port 53' & sleep 1; dig example.com +short; wait",
+        "expected_patterns": [
+          {
+            "pattern": "port 53|53 >|\\.53:",
+            "label": "DNS packets (port 53) in the capture"
+          },
+          {
+            "pattern": "Flags \\[[S\\.P\\.R]+\\]|\\bA\\?",
+            "label": "TCP flags or a DNS query marker"
+          },
+          {
+            "pattern": "\\d{1,3}(\\.\\d{1,3}){3}\\.53",
+            "label": "the resolver's address and port"
+          }
+        ],
+        "verdict_ok": "You captured a query and a response — the packet-level proof that resolution traffic is flowing both ways.",
+        "verdict_missing": "Paste the capture lines. You may need sudo, or to choose the interface carrying your DNS traffic."
+      },
+      "simulate": {
+        "intro": "Port 443 appears unreachable. This is the capture.",
+        "terminal": "$ sudo tcpdump -i eth0 -n -c 6 'tcp port 443 and host 203.0.113.20'\n12:04:11.104231 IP 10.20.30.44.51234 > 203.0.113.20.443: Flags [S], seq 1\n12:04:11.604231 IP 10.20.30.44.51234 > 203.0.113.20.443: Flags [S], seq 1\n12:04:12.605331 IP 10.20.30.44.51234 > 203.0.113.20.443: Flags [S], seq 1\n12:04:14.606531 IP 10.20.30.44.51234 > 203.0.113.20.443: Flags [S], seq 1",
+        "questions": [
+          {
+            "id": "lab-tcpdump-s1",
+            "prompt": "What is proven?",
+            "options": [
+              "The server's application is refusing connections",
+              "SYNs leave the client with no reply: the cause is downstream (filter, route or dead host)",
+              "The client's interface is down",
+              "DNS returned the wrong address"
+            ],
+            "answer": 1,
+            "explanation": "Identical SYNs retransmitted with no SYN-ACK or RST: the request goes out and nothing comes back.",
+            "why_wrong": {
+              "0": "Refusal would show R immediately.",
+              "3": "An IP literal was used.",
+              "2": "Packets are being sent."
+            }
+          },
+          {
+            "id": "lab-tcpdump-s2",
+            "prompt": "Which is the most useful next investigation?",
+            "options": [
+              "Reinstall the application on the server",
+              "Check the path and filters: traceroute -T -p 443 and the destination's firewall/security group",
+              "Change the DNS resolver",
+              "Restart the client networking"
+            ],
+            "answer": 1,
+            "explanation": "The evidence points to drop on the path or at the destination, so establish where the packets stop.",
+            "why_wrong": {
+              "3": "The client is demonstrably transmitting.",
+              "2": "No naming involved.",
+              "0": "The server's stack may not even see the SYNs."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "A capture shows a completed handshake, then the client sends data and receives R after 300 seconds.",
+        "question": "What is the most plausible interpretation?",
+        "options": [
+          "The network path is down",
+          "The port is closed",
+          "DNS is failing",
+          "A stateful device or the application closed an idle connection — check firewall idle timeouts and keepalive settings"
+        ],
+        "answer": 3,
+        "explanation": "A reset after a long-lived connection is typically an idle timeout in a firewall/NAT or an application policy.",
+        "why_wrong": {
+          "1": "The handshake completed, so a listener exists.",
+          "0": "Traffic flowed both ways for a while.",
+          "2": "Resolution happened at connect time."
+        }
+      }
+    },
+    {
+      "id": "curl",
+      "command": "curl",
+      "group": "Connectivity testing",
+      "module_id": "m4",
+      "tagline": "Test the whole stack: DNS, TCP, TLS and HTTP.",
+      "problem": "Determine whether a service is reachable and functional, and read the exact error when it is not.",
+      "how": "Performs name resolution, connects, performs TLS when applicable, and exchanges an HTTP request. Verbose mode shows each stage separately.",
+      "syntax": "curl [options] URL",
+      "flags": [
+        {
+          "flag": "-v",
+          "why": "Show DNS, connect, TLS and request stages — the single most useful diagnostic flag."
+        },
+        {
+          "flag": "-I",
+          "why": "HEAD request: headers only, does not transfer the body."
+        },
+        {
+          "flag": "--connect-timeout N",
+          "why": "Bound the connect phase so a black hole does not hang you."
+        },
+        {
+          "flag": "-k",
+          "why": "Skip certificate verification (diagnosis only, never in production code)."
+        },
+        {
+          "flag": "--resolve HOST:PORT:IP",
+          "why": "Override DNS to test one address while keeping the Host header."
+        },
+        {
+          "flag": "-o /dev/null -w '%{http_code}\\n'",
+          "why": "Status code only, useful in scripts."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "curl -v --connect-timeout 5 https://wiki.corp.example/",
+          "note": "Full staged diagnosis."
+        },
+        {
+          "cmd": "curl -I --resolve wiki.corp.example:443:10.10.5.20 https://wiki.corp.example/",
+          "note": "Bypass DNS, keep the SNI/Host header."
+        },
+        {
+          "cmd": "curl -sS -o /dev/null -w '%{http_code} %{time_total}\\n' http://10.0.0.5/health",
+          "note": "Health check with timing."
+        }
+      ],
+      "sample": "$ curl -v --connect-timeout 5 https://wiki.corp.example/\n* Host wiki.corp.example:443 was resolved.\n*   Trying 10.10.5.20:443...\n* Connected to wiki.corp.example (10.10.5.20) port 443\n* TLSv1.3 (OUT), TLS handshake, Client hello (1)\n* SSL connection using TLSv1.3 / AEAD-AES256-GCM-SHA384\n* Server certificate: CN=wiki.corp.example\n< HTTP/1.1 200 OK\n< Content-Type: text/html; charset=utf-8",
+      "read": [
+        "'was resolved' proves DNS worked. If that line is missing or says 'Could not resolve host', the failure is naming.",
+        "'Trying ...' with no 'Connected' means the TCP handshake never completed: timeout or drop.",
+        "'Connection refused' means RST: nothing listening on that port/address.",
+        "TLS errors after 'Connected' are certificate or protocol problems, not network reachability.",
+        "The HTTP status is the application layer; a 502 means the reverse proxy could not reach a backend."
+      ],
+      "mistakes": [
+        "Using curl -k to 'fix' a certificate problem rather than reading the error.",
+        "Not bounding connect time, so a black-holed path hangs for minutes.",
+        "Concluding 'the service is down' from a 403 — that is authorisation, not availability."
+      ],
+      "when": "As soon as you know the name resolves, to test transport and application in one step.",
+      "followups": [
+        "nc -vz host port",
+        "openssl s_client -connect host:443",
+        "ss -ltnp on the server"
+      ],
+      "try": {
+        "scenario": "Test a public HTTPS endpoint in a bounded way and capture the staged evidence.",
+        "task": "Run a verbose, time-bounded request and identify the resolved IP, the TLS version and the status code.",
+        "command": "curl -v --connect-timeout 5 -o /dev/null -sS https://example.com/ 2>&1 | head -25",
+        "expected_patterns": [
+          {
+            "pattern": "(?i)(was resolved|Trying) ",
+            "label": "the resolution/TCP stage lines"
+          },
+          {
+            "pattern": "(?i)(Connected to|SSL connection using|TLSv1)",
+            "label": "connection or TLS evidence"
+          },
+          {
+            "pattern": "(?i)^< HTTP/[12](\\.\\d)? \\d{3}",
+            "label": "the HTTP status line"
+          }
+        ],
+        "verdict_ok": "You have resolution, transport/TLS and the HTTP status — a complete staged result.",
+        "verdict_missing": "Paste the verbose output including the HTTP status line (use -v and keep stderr)."
+      },
+      "simulate": {
+        "intro": "Three requests to the same service fail differently. Diagnose each.",
+        "terminal": "$ curl -sv --connect-timeout 3 https://app.corp.example/ 2>&1 | head -4\n* Could not resolve host: app.corp.example\n\n$ curl -sv --connect-timeout 3 https://10.10.5.30:443/ 2>&1 | head -5\n*   Trying 10.10.5.30:443...\n* connect to 10.10.5.30 port 443 failed: Connection refused\n\n$ curl -sv --connect-timeout 3 https://10.10.5.40:443/ 2>&1 | head -4\n*   Trying 10.10.5.40:443...\n* Connection timed out after 3001 milliseconds",
+        "questions": [
+          {
+            "id": "lab-curl-s1",
+            "prompt": "Which failure is a naming problem?",
+            "options": [
+              "The first: 'Could not resolve host'",
+              "The third: timed out",
+              "The second: connection refused",
+              "None of them"
+            ],
+            "answer": 0,
+            "explanation": "No resolution occurred, so no packet was sent. Check NSS, hosts, resolver config and the record.",
+            "why_wrong": {
+              "2": "That reached the host and got RST.",
+              "1": "That reached the network but got silence.",
+              "3": "Each is distinct and diagnosable."
+            }
+          },
+          {
+            "id": "lab-curl-s2",
+            "prompt": "For the third host, what is proven?",
+            "options": [
+              "The service refused the connection",
+              "The certificate is invalid",
+              "SYNs left the client and nothing came back — filter, wrong route, or a dead host",
+              "DNS failed"
+            ],
+            "answer": 2,
+            "explanation": "A timeout means silence: no RST, no SYN-ACK. That is a drop or an unreachable host.",
+            "why_wrong": {
+              "0": "Refusal is immediate.",
+              "1": "TLS never started.",
+              "3": "An IP literal was used."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "curl to https://app:443 connects, TLS completes, and the response is HTTP 502.",
+        "question": "Where is the fault?",
+        "options": [
+          "The certificate is expired",
+          "The TCP port is blocked",
+          "The front-end is reachable but cannot reach its backend — an application/proxy problem, not a network path problem",
+          "The client cannot resolve the name"
+        ],
+        "answer": 2,
+        "explanation": "DNS, TCP and TLS all succeeded. A 502 comes from the proxy reporting a backend failure.",
+        "why_wrong": {
+          "3": "It resolved and connected.",
+          "1": "The port answered.",
+          "0": "TLS completed successfully."
+        }
+      }
+    },
+    {
+      "id": "nc",
+      "command": "nc",
+      "group": "Connectivity testing",
+      "module_id": "m4",
+      "tagline": "The smallest possible port test.",
+      "problem": "Test whether a specific TCP or UDP port is reachable, without HTTP or TLS in the way.",
+      "how": "Opens a TCP connection (or sends UDP datagrams) and reports success or the precise error. With -l it can listen, which is useful for lab tests.",
+      "syntax": "nc [options] HOST PORT",
+      "flags": [
+        {
+          "flag": "-z",
+          "why": "Scan mode: connect and close without sending data."
+        },
+        {
+          "flag": "-v",
+          "why": "Verbose: report open/refused explicitly."
+        },
+        {
+          "flag": "-w N",
+          "why": "Timeout in seconds — essential for timeouts vs refusals."
+        },
+        {
+          "flag": "-u",
+          "why": "UDP instead of TCP (note: absence of a reply is not proof of a closed port)."
+        },
+        {
+          "flag": "-l",
+          "why": "Listen mode, for testing from the other side."
+        }
+      ],
+      "examples": [
+        {
+          "cmd": "nc -vz -w 3 10.0.0.5 22",
+          "note": "Is SSH reachable?"
+        },
+        {
+          "cmd": "nc -vzu -w 3 10.0.0.53 53",
+          "note": "UDP DNS reachability (less conclusive)."
+        },
+        {
+          "cmd": "nc -lvnp 9999",
+          "note": "Listen locally to prove egress from another host."
+        }
+      ],
+      "sample": "$ nc -vz -w 3 10.0.0.5 22\nConnection to 10.0.0.5 22 port [tcp/ssh] succeeded!\n\n$ nc -vz -w 3 10.0.0.5 8080\nnc: connect to 10.0.0.5 port 8080 (tcp) failed: Connection refused\n\n$ nc -vz -w 3 10.0.0.9 443\nnc: connect to 10.0.0.9 port 443 (tcp) timed out: Operation now in progress",
+      "read": [
+        "'succeeded' means the TCP handshake completed: a listener exists and the path works.",
+        "'Connection refused' means RST: the host is reachable but nothing listens on that port/address.",
+        "'timed out' means silence: a DROP rule, wrong route, or dead host.",
+        "For UDP, no output usually means 'sent, no reply' — which does not prove the port is closed."
+      ],
+      "mistakes": [
+        "Using nc -u to conclude a UDP port is closed (you usually cannot know).",
+        "Omitting -w, so a filtered port hangs the terminal.",
+        "Testing from a host that is allowed by policy and assuming the user's position is identical."
+      ],
+      "when": "When you need the port-level answer without protocol complexity.",
+      "followups": [
+        "curl -v",
+        "sudo tcpdump 'tcp port PORT'",
+        "ss -ltnp on the server"
+      ],
+      "try": {
+        "scenario": "Test a real port on a public host to see the difference between open and refused.",
+        "task": "Test TCP 443 and a port that is very likely closed, with a short timeout.",
+        "command": "nc -vz -w 3 1.1.1.1 443; echo ---; nc -vz -w 3 1.1.1.1 9 ; echo \"exit=$?\"",
+        "expected_patterns": [
+          {
+            "pattern": "(?i)(succeeded|open)",
+            "label": "a successful connection line"
+          },
+          {
+            "pattern": "(?i)(refused|timed out|failed)",
+            "label": "a failure line for the closed port"
+          },
+          {
+            "pattern": "exit=\\d+",
+            "label": "the exit code"
+          }
+        ],
+        "verdict_ok": "You have both signatures side by side: success on an open port and a precise failure on a closed one.",
+        "verdict_missing": "Paste both probe results including the error text; that contrast is the lesson."
+      },
+      "simulate": {
+        "intro": "Two probes to the same server. Interpret both.",
+        "terminal": "$ nc -vz -w 3 203.0.113.20 443\nConnection to 203.0.113.20 443 port [tcp/https] succeeded!\n$ nc -vz -w 3 203.0.113.20 8080\nnc: connect to 203.0.113.20 port 8080 (tcp) timed out",
+        "questions": [
+          {
+            "id": "lab-nc-s1",
+            "prompt": "What is the difference in meaning between the two results?",
+            "options": [
+              "443 has a listening service; 8080 receives no response at all, suggesting a filter rather than an absent listener",
+              "8080 is closed and 443 is filtered",
+              "The server is down",
+              "Both ports are closed"
+            ],
+            "answer": 0,
+            "explanation": "A closed port on a reachable host answers with RST (refused). Silence means packets were dropped — a filter.",
+            "why_wrong": {
+              "3": "443 accepted a connection.",
+              "1": "Reversed.",
+              "2": "It answered on 443."
+            }
+          },
+          {
+            "id": "lab-nc-s2",
+            "prompt": "Which check would confirm a listener exists on 443 from the server side?",
+            "options": [
+              "dig the server name",
+              "ping the server",
+              "ip route on the client",
+              "ss -ltnp '( sport = :443 )' on the server"
+            ],
+            "answer": 3,
+            "explanation": "ss shows the listener and the process owning it.",
+            "why_wrong": {
+              "1": "Only proves reachability.",
+              "0": "Only proves naming.",
+              "2": "Only proves the client's path choice."
+            }
+          }
+        ]
+      },
+      "apply": {
+        "scenario": "A user cannot reach an application on port 8443. From your machine nc succeeds; from theirs it times out.",
+        "question": "What does this establish?",
+        "options": [
+          "The service is down",
+          "The service is up; the difference is path or policy specific to the user's location",
+          "The user's DNS is broken",
+          "The server's certificate is wrong"
+        ],
+        "answer": 1,
+        "explanation": "A successful connection from one place proves the listener exists; a timeout elsewhere is a filtering or routing difference on that path.",
+        "why_wrong": {
+          "0": "It accepted a connection.",
+          "2": "A timeout occurs after resolution.",
+          "3": "TLS was never reached."
+        }
+      }
+    }
+  ]
+}

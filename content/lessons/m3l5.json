@@ -1,0 +1,135 @@
+{
+  "id": "m3l5",
+  "module_id": "m3",
+  "title": "DNS failures, response codes, split horizon and DNSSEC",
+  "minutes": 24,
+  "summary": "NXDOMAIN, SERVFAIL, REFUSED and timeout are different diagnoses. This lesson separates them, then covers the configurations that cause 'the record is right but the answer is wrong'.",
+  "sections": [
+    {
+      "heading": "Response codes and what they mean",
+      "html": "<table><tr><th>RCODE</th><th>Name</th><th>Meaning</th><th>Usual cause</th></tr><tr><td>0</td><td>NOERROR</td><td>The query succeeded</td><td>But check the answer section: NOERROR with zero answers = NODATA</td></tr><tr><td>2</td><td>SERVFAIL</td><td>The resolver could not produce an answer</td><td>Upstream failure, timeout to authoritative, DNSSEC validation failure, recursion disabled</td></tr><tr><td>3</td><td>NXDOMAIN</td><td>The name does not exist</td><td>Typo, deleted record, wrong zone, or the authoritative server genuinely has no such name</td></tr><tr><td>5</td><td>REFUSED</td><td>The server refuses to answer you</td><td>ACL: recursion denied, query from an unauthorised IP</td></tr><tr><td>1</td><td>FORMERR</td><td>Malformed query</td><td>Bad EDNS handling, protocol mismatch</td></tr><tr><td>4</td><td>NOTIMP</td><td>Query type not implemented</td><td>Rare</td></tr></table><p><strong>NODATA</strong> deserves its own line: NOERROR with an empty answer section means 'the name exists but has no record of that type'. Asking for an AAAA on an IPv4-only service returns NODATA, not NXDOMAIN. Confusing the two leads to wrong conclusions about whether a name exists.</p>"
+    },
+    {
+      "heading": "Timeout is not an answer",
+      "html": "<p>A timeout means <em>no response arrived</em>, which is fundamentally different from a response saying 'no':</p><ul><li><strong>Timeout</strong> — path blocked, server down, firewall dropping UDP 53, or wrong nameserver address. The resolver eventually gives up; the application gets no answer at all. In practice glibc reports 'Temporary failure in name resolution', and <code>dig</code> shows no response.</li><li><strong>SERVFAIL</strong> — a response arrived saying the resolver failed. Evidence that the network path works and the resolver is trying.</li><li><strong>NXDOMAIN</strong> — a definitive, cacheable 'does not exist'.</li></ul><p>This trio is the whole content of case study 11. The distinguishing command is just <code>dig</code> with timing: a timeout is slow (seconds) and produces no answer; SERVFAIL is fast and explicit.</p>"
+    },
+    {
+      "heading": "Negative caching",
+      "html": "<p>NXDOMAIN and NODATA responses are cached, for the TTL in the SOA record's minimum field (RFC 2308). The practical failure: you create a record, but a resolver had already cached NXDOMAIN for that name and keeps returning it until the negative TTL expires.</p><p>Symptoms of negative caching rather than a bad record: the record checks out on the authoritative server (<code>dig @ns1.example.com name</code> works), but <code>dig @1.1.1.1 name</code> returns NXDOMAIN for a while. That is not 'propagation' — it is a cached negative answer ticking down.</p>"
+    },
+    {
+      "heading": "Split-horizon DNS",
+      "html": "<p>Split horizon (split-brain) means the same name returns different answers depending on who asks: internal clients get a private address, external clients get a public one. Implemented with separate authoritative views, or with separate internal and external zones.</p><p>Failure modes are distinctive because they are <em>client-dependent</em>:</p><ul><li>A client on the VPN gets a different answer than one on the office LAN.</li><li>An on-prem service resolves to a private range from outside, and connects fail — the record is not wrong, the view is.</li><li>Clients using a public resolver (1.1.1.1) see only the external view, so internal names either NXDOMAIN or resolve to a public IP that does not accept traffic.</li></ul><p>Diagnosis: query the same name against different resolvers explicitly — <code>dig @&lt;internal-resolver&gt; app.corp.example</code> vs <code>dig @1.1.1.1 app.corp.example</code>. If they differ, you are looking at views, not at caching.</p>"
+    },
+    {
+      "heading": "DNSSEC fundamentals",
+      "html": "<p>DNSSEC adds cryptographic signatures so a resolver can verify that an answer came from the zone and was not altered in transit. It does <strong>not</strong> encrypt anything; that is DoT/DoH.</p><p>The chain: each zone signs its records (RRSIG), publishes a hash of its public key in its parent (DS), and the parent signs that delegation. Validation walks from the root's trust anchor downward. Key records: <code>DNSKEY</code>, <code>DS</code>, <code>RRSIG</code>, and <code>NSEC</code>/<code>NSEC3</code> for authenticated denial of existence.</p><p>Practical consequences for a working engineer:</p><ul><li>A DNSSEC chain break makes <em>everything</em> in the zone fail with SERVFAIL — including names that resolve fine when you query the authoritative server directly.</li><li>Expired RRSIGs cause outages on a schedule; monitoring signature expiry matters.</li><li>Resolvers differ in whether they validate; a validating resolver turns a broken chain into SERVFAIL instead of a wrong answer.</li></ul><p>Because DNSSEC responses are large, they are also the classic victim of blocked UDP fragments or filtered DNS-over-TCP.</p>"
+    },
+    {
+      "heading": "Common misconfigurations checklist",
+      "html": "<ul><li>Record exists only at the authoritative server, but the delegation (NS) points elsewhere.</li><li>Missing trailing dot: <code>CNAME www.example.com.</code> vs <code>CNAME www.example.com</code> (the latter becomes a relative name inside the zone).</li><li>Wrong RR type for the target: MX pointing at a CNAME; apex <code>@</code> given a CNAME (breaks the whole zone including SOA/NS).</li><li>TTL 60 on everything, causing resolvers to hammer the authoritative server.</li><li>Reverse zone missing, so PTR lookups fail while forward works.</li><li>Search domain missing in DHCP (option 15/119), so short names fail but FQDNs work.</li><li>Internal names published only in an internal view, then queried from an external resolver.</li></ul>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m3l5-1",
+      "type": "mcq",
+      "prompt": "dig returns status: NXDOMAIN for a name you can see configured on the authoritative server. What is the most likely explanation?",
+      "options": [
+        "The authoritative server is down",
+        "The record's TTL has expired",
+        "A resolver has the earlier NXDOMAIN negatively cached, or you are hitting a different view/zone",
+        "UDP 53 is blocked"
+      ],
+      "answer": 2,
+      "explanation": "Negative caching or split-horizon views explain an NXDOMAIN for a record that exists authoritatively. Verify with dig @<authoritative> to bypass caches and views.",
+      "why_wrong": {
+        "0": "A dead server produces a timeout, not a clean NXDOMAIN.",
+        "3": "Blocked UDP gives a timeout, not an authoritative-style NXDOMAIN.",
+        "1": "TTL expiry causes a refetch, not non-existence."
+      },
+      "concepts": [
+        "negative caching",
+        "split horizon"
+      ]
+    },
+    {
+      "id": "q-m3l5-2",
+      "type": "mcq",
+      "prompt": "Which is true of SERVFAIL?",
+      "options": [
+        "It is generally not cached, and it signals the resolver could not obtain a valid answer",
+        "It is cached like NXDOMAIN for the SOA minimum",
+        "It means the name does not exist",
+        "It means the client sent a malformed query"
+      ],
+      "answer": 0,
+      "explanation": "SERVFAIL is a transient server-side failure signal. It is typically not cached (or cached very briefly), so retries can succeed where NXDOMAIN retries cannot.",
+      "why_wrong": {
+        "1": "Negative caching applies to NXDOMAIN/NODATA, not SERVFAIL.",
+        "2": "That is NXDOMAIN.",
+        "3": "That is FORMERR."
+      },
+      "concepts": [
+        "SERVFAIL",
+        "caching"
+      ]
+    },
+    {
+      "id": "q-m3l5-3",
+      "type": "self",
+      "prompt": "A domain intermittently fails to resolve. Explain how you would distinguish timeout, SERVFAIL and NXDOMAIN, and what each implies.",
+      "checklist": [
+        {
+          "text": "Timeout means no response arrived at all — path, firewall or server-down problem.",
+          "weight": 2
+        },
+        {
+          "text": "SERVFAIL means a response arrived but the resolver could not answer — upstream, DNSSEC or recursion issue.",
+          "weight": 2
+        },
+        {
+          "text": "NXDOMAIN is a definitive, cacheable 'does not exist' and implies a naming or view problem.",
+          "weight": 2
+        },
+        {
+          "text": "Use dig with explicit servers, and note elapsed time and status line.",
+          "weight": 1
+        },
+        {
+          "text": "Check both the configured resolver and the authoritative server to separate server truth from cache.",
+          "weight": 1
+        }
+      ],
+      "reference": "<p>Run <code>dig name</code> repeatedly and read the status line plus timing. No response with multi-second waits is a timeout: suspect path filtering (UDP 53), a dead resolver, or a wrong nameserver address. A fast SERVFAIL means the resolver is reachable but cannot produce an answer: check upstream reachability, recursion ACLs and DNSSEC validation. A fast NXDOMAIN from the configured resolver but a correct answer from the authoritative server means negative caching or a split-horizon view. Intermittency points at multiple resolvers in resolv.conf with one broken, or at load-dependent packet loss.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "DNS failure classification"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "resolv.conf / systemd-resolved",
+      "text": "Multiple nameservers means failures can be intermittent depending on which is tried first."
+    },
+    {
+      "title": "TLS / HTTP",
+      "text": "A DNSSEC-driven SERVFAIL looks like 'the site is down' to a user but is purely a naming failure."
+    },
+    {
+      "title": "Case study 11",
+      "text": "The DNS timeout vs NXDOMAIN mission is built on this lesson."
+    }
+  ],
+  "interview": [
+    {
+      "q": "What is the difference between NXDOMAIN and SERVFAIL?",
+      "a": "NXDOMAIN is an authoritative 'this name does not exist' and is negatively cached. SERVFAIL means the resolver could not obtain a valid answer — upstream failure, timeout, or DNSSEC validation problem — and is usually not cached, so retrying can succeed."
+    },
+    {
+      "q": "What is split-horizon DNS and how does it break things?",
+      "a": "The same name returns different answers depending on the source of the query, typically private addresses internally and public addresses externally. It breaks when a client uses the wrong view — for example a public resolver for an internal name — which looks like a wrong or missing record."
+    }
+  ]
+}

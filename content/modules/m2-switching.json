@@ -1,0 +1,113 @@
+{
+  "id": "m2",
+  "number": 2,
+  "title": "Switching Fundamentals",
+  "tagline": "How frames move inside a broadcast domain.",
+  "priority": "core",
+  "weight": 1.3,
+  "estimated_minutes": 90,
+  "summary": "A switch is a self-learning forwarding engine. This module covers frames, MAC learning, flooding, VLANs and trunks, and why loops are catastrophic without STP.",
+  "objectives": [
+    "Describe the Ethernet frame fields that matter for switching decisions.",
+    "Explain MAC learning and the three possible forwarding decisions for any frame.",
+    "Predict what a switch does with unknown unicast, broadcast and known unicast traffic.",
+    "Explain access ports, trunk ports and 802.1Q tagging, including the native VLAN trap.",
+    "Explain why a loop breaks a network and what STP actually does about it."
+  ],
+  "key_questions": [
+    "How does a switch build its MAC address table?",
+    "When does a switch flood a frame, and when does it filter?",
+    "What breaks when two switches are connected twice with no STP?"
+  ],
+  "lesson_ids": [
+    "m2l1",
+    "m2l2",
+    "m2l3",
+    "m2l4"
+  ],
+  "lab_ids": [
+    "ip-link",
+    "tcpdump"
+  ],
+  "mission_ids": [
+    "case07"
+  ],
+  "assessment": [
+    {
+      "id": "q-m2a-1",
+      "type": "mcq",
+      "prompt": "A switch receives a frame with an unknown destination MAC. What does it do with it?",
+      "options": [
+        "Sends it back out the port it arrived on",
+        "Sends it to the default gateway",
+        "Floods it out every port in the same VLAN except the ingress port",
+        "Drops it"
+      ],
+      "answer": 2,
+      "explanation": "Unknown unicast is flooded within the VLAN/broadcast domain so the destination has a chance to answer and teach the switch its location. Flooding never includes the ingress port.",
+      "why_wrong": {
+        "3": "Dropping would make the first frame of every conversation fail.",
+        "0": "Sending back out the ingress port is never correct for a switch.",
+        "1": "Switches do not have a default gateway; that is a Layer 3 concept."
+      },
+      "concepts": [
+        "unknown unicast flooding"
+      ]
+    },
+    {
+      "id": "q-m2a-2",
+      "type": "mcq",
+      "prompt": "Two PCs are on access ports in VLAN 10 and VLAN 20 of the same switch. What is required for them to communicate?",
+      "options": [
+        "A Layer 3 device or an SVI/router-on-a-stick to route between the VLANs",
+        "Nothing, the switch forwards between VLANs automatically",
+        "A trunk between the two access ports",
+        "STP must elect the switch as root"
+      ],
+      "answer": 0,
+      "explanation": "VLANs are separate broadcast domains and therefore separate subnets. Moving between them is routing, which needs a Layer 3 interface in each VLAN (SVI) or a router with subinterfaces.",
+      "why_wrong": {
+        "1": "A switch does not forward between VLANs by default.",
+        "2": "A trunk carries multiple VLANs to another switch or router, it does not make two access ports routable.",
+        "3": "STP prevents loops; it has nothing to do with inter-VLAN routing."
+      },
+      "concepts": [
+        "VLAN",
+        "inter-VLAN routing"
+      ]
+    },
+    {
+      "id": "q-m2a-3",
+      "type": "self",
+      "prompt": "Explain, step by step, how a switch learns where MAC address aa:bb:cc:00:11:22 lives, and how that knowledge is used afterwards.",
+      "checklist": [
+        {
+          "text": "The switch records the source MAC of every received frame together with the ingress port.",
+          "weight": 2
+        },
+        {
+          "text": "The entry is refreshed each time the source MAC is seen; it ages out after a timeout (typically 300s).",
+          "weight": 2
+        },
+        {
+          "text": "For a known destination MAC, the frame is forwarded only out the mapped port (filter/forward).",
+          "weight": 2
+        },
+        {
+          "text": "If the destination is unknown, the frame is flooded within the VLAN.",
+          "weight": 1
+        },
+        {
+          "text": "If the destination is on the ingress port, the frame is filtered (dropped) because the device already has it.",
+          "weight": 1
+        }
+      ],
+      "reference": "<p>Learning is entirely passive and based on <em>source</em> addresses. Every frame that arrives teaches the switch 'this MAC is behind this port'. Entries live in the MAC address table (CAM table) and age out after a few minutes of silence. Forwarding uses the <em>destination</em> address: known destination means forward out exactly one port; unknown means flood inside the VLAN; destination on the ingress port means filter. A MAC appearing on a different port causes the table to move the entry — which is normal when a device is moved, and a symptom of a loop when it flaps constantly.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "MAC learning",
+        "forwarding table"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,135 @@
+{
+  "id": "m3l3",
+  "module_id": "m3",
+  "title": "DNS as a system: hierarchy, resolvers and record types",
+  "minutes": 26,
+  "summary": "DNS is a distributed, hierarchical database with caching bolted on. Understand the roles — stub, recursive, authoritative — and the record types stop being trivia.",
+  "sections": [
+    {
+      "heading": "Why DNS exists",
+      "html": "<p>Humans need stable names, machines need routable addresses, and addresses change. A local hosts file works until you have more than a handful of hosts: it cannot scale, cannot be delegated, and cannot be updated centrally.</p><p>DNS is a <strong>hierarchical, distributed, eventually consistent database</strong> whose keys are names and whose values are resource records. Nobody holds the whole thing. Authority is delegated: the root delegates <code>.com</code>, <code>.com</code> delegates <code>example.com</code>, and the owner of <code>example.com</code> runs the authoritative servers for it.</p>"
+    },
+    {
+      "heading": "The cast of characters",
+      "html": "<table><tr><th>Role</th><th>What it does</th><th>Example</th></tr><tr><td>Stub resolver</td><td>Library code in the OS that sends one query and waits</td><td>glibc <code>getaddrinfo</code>, <code>systemd-resolved</code> stub</td></tr><tr><td>Recursive resolver</td><td>Does the walking; caches; answers the client</td><td>ISP resolver, 1.1.1.1, unbound, BIND with recursion</td></tr><tr><td>Root servers</td><td>13 named clusters; refer to TLD servers</td><td>a.root-servers.net … m.root-servers.net</td></tr><tr><td>TLD servers</td><td>Refer to authoritative servers for a zone</td><td>a.gtld-servers.net for <code>.com</code></td></tr><tr><td>Authoritative server</td><td>Holds the zone's records; source of truth</td><td>ns1.example.com</td></tr></table><p><strong>Recursive vs iterative</strong> is the distinction people mix up: the <em>client's</em> query to its resolver is recursive (\"give me the final answer\"), while the resolver's queries to root/TLD/authoritative servers are iterative (\"I'll take referrals and keep walking\"). The RD (recursion desired) flag in the query header is what requests the recursive behaviour.</p>"
+    },
+    {
+      "heading": "Record types that matter",
+      "html": "<table><tr><th>Type</th><th>Purpose</th><th>Notes and traps</th></tr><tr><td>A</td><td>Name -> IPv4</td><td>The workhorse record</td></tr><tr><td>AAAA</td><td>Name -> IPv6</td><td>Same name can have both A and AAAA</td></tr><tr><td>CNAME</td><td>Alias to another name</td><td>Cannot coexist with other records at the same name; a CNAME target is resolved separately (extra query)</td></tr><tr><td>MX</td><td>Mail exchanger</td><td>Has a preference value; must point to an A/AAAA, never a CNAME</td></tr><tr><td>NS</td><td>Delegation to authoritative servers</td><td>Defines zone boundaries</td></tr><tr><td>PTR</td><td>IP -> name (reverse)</td><td>Lives in <code>in-addr.arpa</code> / <code>ip6.arpa</code></td></tr><tr><td>TXT</td><td>Arbitrary text</td><td>SPF/DKIM/DMARC, domain verification, policy</td></tr><tr><td>SOA</td><td>Zone authority record</td><td>Holds the primary NS, admin contact, serial and default TTLs (including the negative-cache TTL)</td></tr><tr><td>SRV</td><td>Service location (host + port)</td><td>Used by SIP, LDAP, Kerberos, Kubernetes</td></tr><tr><td>OPT</td><td>EDNS(0) pseudo-record</td><td>Enables large UDP responses and DNSSEC signalling</td></tr></table><p>A CNAME chain is a common source of surprise: <code>www.example.com CNAME example.com</code> means the resolver must then resolve <code>example.com</code> to an A record. <code>dig</code> shows this as two answers in one response — or as a longer resolution path if the target is in another zone.</p>"
+    },
+    {
+      "heading": "Caching, TTL and negative caching",
+      "html": "<p>Caching is what makes DNS scale. Every answer carries a TTL; the resolver may serve it from cache until the TTL expires. Three consequences:</p><ul><li><strong>'DNS propagation' is a myth.</strong> Records do not propagate. Each resolver's cached copy simply expires. A change takes effect when every relevant cache has expired, which is bounded by the old TTL, not by any global process.</li><li><strong>Raising TTL before a change is the professional move</strong>: lower TTL to 60s a day before the migration, then change the record.</li><li><strong>Negative caching</strong> also has a TTL, taken from the SOA minimum (or the RFC 2308 field). This is why 'I created the record but it still says NXDOMAIN' — a resolver cached the earlier NXDOMAIN.</li></ul><p>TTL 0 means 'do not cache'; it is legal but hostile to infrastructure and rarely correct.</p>"
+    },
+    {
+      "heading": "Forward, reverse, and the transport",
+      "html": "<p>Reverse lookups (PTR) matter for logs, mail reputation and some security tooling. They are not symmetric with forward records and are often missing: a forward record without a PTR is normal; a PTR pointing at a name with no forward A record is a misconfiguration.</p><p>DNS uses <strong>UDP port 53</strong> by default and falls back to <strong>TCP 53</strong> for responses exceeding the path MTU or for zone transfers (AXFR/IXFR). EDNS(0) allows larger UDP responses; if a middlebox blocks them, the resolver should retry over TCP — a failure mode where small queries work and large ones (like DNSSEC-signed answers) fail.</p><p>TCP is also the reason 'dig works but the browser does not' is not always a DNS issue: <code>dig</code> tests the protocol, not the whole name-resolution path used by the application (NSS, hosts file, search domains).</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m3l3-1",
+      "type": "mcq",
+      "prompt": "Which statement about recursive and iterative queries is correct?",
+      "options": [
+        "Both client and resolver always send recursive queries",
+        "The client sends a recursive query (RD set); the resolver performs iterative queries to root, TLD and authoritative servers",
+        "Iterative queries are only used for reverse lookups",
+        "The client sends iterative queries; resolvers send recursive ones"
+      ],
+      "answer": 1,
+      "explanation": "Clients ask for a final answer (recursion desired). The resolver walks the hierarchy itself with referrals, which is iteration.",
+      "why_wrong": {
+        "3": "It is the other way round.",
+        "0": "Iteration is what makes the resolver's job possible.",
+        "2": "The distinction is about who does the walking, not the record type."
+      },
+      "concepts": [
+        "recursive vs iterative"
+      ]
+    },
+    {
+      "id": "q-m3l3-2",
+      "type": "mcq",
+      "prompt": "You change an A record from 203.0.113.10 to 203.0.113.20 with the old TTL at 3600s. A user still sees the old address 20 minutes later. Best explanation?",
+      "options": [
+        "The record has not propagated to all servers",
+        "NXDOMAIN is being negative-cached",
+        "The authoritative server rejected the change",
+        "A resolver has the old answer cached until its TTL expires"
+      ],
+      "answer": 3,
+      "explanation": "Records do not propagate; caches expire. With a 3600s TTL, some resolvers may hold the old value for up to an hour.",
+      "why_wrong": {
+        "0": "Propagation is a colloquialism for TTL expiry, not a real mechanism.",
+        "2": "The authoritative server does not push records anywhere.",
+        "1": "NXDOMAIN would mean the name does not exist at all."
+      },
+      "concepts": [
+        "TTL",
+        "caching"
+      ]
+    },
+    {
+      "id": "q-m3l3-3",
+      "type": "self",
+      "prompt": "Explain what a recursive resolver does for an uncached lookup of www.example.com, naming each step and each server role.",
+      "checklist": [
+        {
+          "text": "Resolves the first query by asking a root server, which refers to the .com TLD servers.",
+          "weight": 2
+        },
+        {
+          "text": "Asks the .com TLD servers, which refer to the authoritative nameservers for example.com.",
+          "weight": 2
+        },
+        {
+          "text": "Asks the authoritative server for www.example.com, which returns the answer (possibly a CNAME chain).",
+          "weight": 2
+        },
+        {
+          "text": "Caches the answer for the TTL and returns it to the client.",
+          "weight": 1
+        },
+        {
+          "text": "The client's query was recursive; the resolver's queries were iterative.",
+          "weight": 1
+        },
+        {
+          "text": "If any of the chain is already cached, the resolver skips that step.",
+          "weight": 1
+        }
+      ],
+      "reference": "<p>The client sends one recursive query to its resolver. If the answer is not cached, the resolver starts at the root: a root server replies with a referral to the <code>.com</code> servers (a delegation via NS records plus glue). The resolver asks a <code>.com</code> server, which refers to example.com's authoritative nameservers. It then asks an authoritative server, which returns the A record (or CNAME plus the target's A). The resolver caches the answer respecting the TTL and returns it. Every step after the client's initial query is iterative, and any cached step is skipped entirely — which is why not every lookup touches the root.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "DNS hierarchy",
+        "recursion"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Routing",
+      "text": "The query itself needs a working default route and gateway, so 'no DNS' is often 'no route'."
+    },
+    {
+      "title": "TCP/UDP",
+      "text": "Port 53/UDP with TCP fallback; large DNSSEC responses are where blocked UDP fragments hurt."
+    },
+    {
+      "title": "DHCP",
+      "text": "Option 6 decides which resolver the client uses — the join between the two halves of this module."
+    }
+  ],
+  "interview": [
+    {
+      "q": "What is the difference between a CNAME and an A record?",
+      "a": "An A record gives an IPv4 address for a name. A CNAME says 'this name is an alias for that name', so the client must resolve the target to get an address. CNAMEs cannot coexist with other records at the same name, and MX/NS targets must not be CNAMEs."
+    },
+    {
+      "q": "Explain TTL and what happens when you change a record.",
+      "a": "TTL is how long a resolver may cache an answer. Changing the authoritative record does not update anyone's cache; each cache keeps the old value until its TTL expires. That bounded window is what people call propagation."
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "id": "m2l4",
+  "module_id": "m2",
+  "title": "Loops, broadcast storms and Spanning Tree",
+  "minutes": 18,
+  "summary": "Two links between two switches create a loop, and Ethernet has no TTL to stop it. This lesson explains the failure mode precisely and what STP does about it.",
+  "sections": [
+    {
+      "heading": "Why a loop is catastrophic and not merely inefficient",
+      "html": "<p>IP packets carry a TTL that decrements at every router, so a routing loop eventually dies. <strong>Ethernet frames have no TTL.</strong> A broadcast frame is flooded out every port except the ingress port; with a loop, it arrives back on another port and is flooded again, forever, multiplying each time.</p><p>Sequence in a two-switch loop:</p><ol class='steps'><li>A host broadcasts an ARP request.</li><li>Switch 1 floods it out both links toward Switch 2.</li><li>Switch 2 receives it on two ports and floods it back out both links, including the one it came from.</li><li>Each switch now receives two copies and sends four. Traffic doubles every generation.</li><li>The MAC table also corrupts: the same MAC appears to move between the two uplinks thousands of times per second, so <em>unicast</em> is flooded too.</li><li>Within seconds the links saturate, CPU spikes, and the whole broadcast domain is unusable — including management access.</li></ol><p>This is a <em>broadcast storm</em>. There is no graceful degradation; it is a hard outage that usually requires physically breaking the loop.</p>"
+    },
+    {
+      "heading": "What STP actually does",
+      "html": "<p>Spanning Tree Protocol (IEEE 802.1D, with RSTP in 802.1w and MSTP in 802.1s) prevents loops by making the topology look like a tree from Layer 2's point of view:</p><ol class='steps'><li><b>Elect a root bridge.</b> Lowest bridge ID (priority + MAC) wins. Every other switch computes a path to it.</li><li><b>Compute path cost.</b> Each port has a cost based on link speed; the sum to the root is the root path cost.</li><li><b>Select one root port</b> per non-root switch: the port with the lowest total cost to the root.</li><li><b>Select designated ports</b> on each segment: one forwarding port per segment, chosen by lowest cost to root.</li><li><b>Block the rest.</b> Redundant links become <em>blocking/alternate</em> — still connected, but no data flows, so no loop.</li></ol><p>BPDUs (bridge protocol data units), sent as a special multicast (01:80:c2:00:00:00), carry all of this. If BPDUs stop, the protocol may unblock a port and recreate the loop — which is what a misconfigured or one-directional link can cause.</p>"
+    },
+    {
+      "heading": "STP states, timers and the RSTP difference",
+      "html": "<table><tr><th>Classic STP state</th><th>Meaning</th></tr><tr><td>Blocking</td><td>Receives BPDUs only, no data (20s max age)</td></tr><tr><td>Listening</td><td>Still no data, 15s</td></tr><tr><td>Learning</td><td>Builds MAC table, no data, 15s</td></tr><tr><td>Forwarding</td><td>Normal operation</td></tr></table><p>Classic convergence can take 30-50 seconds — an eternity for a user. RSTP collapses Listening/Learning into a proposal/agreement handshake and converges in well under a second on point-to-point links. MSTP maps groups of VLANs to independent instances so you can load-balance while staying loop-free.</p><p>Modern alternatives that are progressively replacing STP entirely: L3-only designs (routed access, no loops by construction), MLAG/vPC (multichassis link aggregation), and EVPN-VXLAN fabrics.</p>"
+    },
+    {
+      "heading": "Detecting and diagnosing a loop on a Linux host",
+      "html": "<p>You rarely get clean loop evidence from an endpoint, but you do see these:</p><pre><span class='c'># broadcast traffic volume explodes</span>tcpdump -i eth0 -c 50 -nn -e arp<span class='c'># interface counters: massive broadcast/multicast counts, retransmits</span>ip -s link show eth0<span class='c'># heartbeats show extreme latency variance</span>ping -i 0.2 -c 20 192.0.2.1</pre><p>The tell-tale is that latency and loss are catastrophic but the interface is up. A duplex mismatch looks similar (late collisions, poor throughput at load) and is worth ruling out: <code>ethtool eth0 | grep -i duplex</code>.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m2l4-1",
+      "type": "mcq",
+      "prompt": "Why does a Layer 2 loop fail faster and harder than a Layer 3 routing loop?",
+      "options": [
+        "Switches are slower than routers",
+        "Layer 2 loops only affect broadcast traffic",
+        "STP increases traffic until links fail",
+        "Ethernet frames have no TTL, so looping frames are never discarded"
+      ],
+      "answer": 3,
+      "explanation": "Without a hop counter, a looped frame recirculates indefinitely and is amplified by flooding, saturating the segment in seconds. IP loops are bounded by TTL.",
+      "why_wrong": {
+        "0": "Switches are typically faster than routers.",
+        "2": "STP prevents loops; it does not create traffic.",
+        "1": "MAC table corruption caused by the loop makes unicast flood too."
+      },
+      "concepts": [
+        "broadcast storm",
+        "STP"
+      ]
+    },
+    {
+      "id": "q-m2l4-2",
+      "type": "mcq",
+      "prompt": "In STP, which switch becomes the root bridge?",
+      "options": [
+        "The one with the lowest bridge ID (priority, then MAC)",
+        "The first switch to send a BPDU",
+        "The switch with the most ports",
+        "The switch with the highest throughput"
+      ],
+      "answer": 0,
+      "explanation": "Bridge ID = 2-byte priority (default 32768) + MAC. Lowest wins. Ports are then evaluated by root path cost.",
+      "why_wrong": {
+        "2": "Port count is not part of the election.",
+        "1": "All switches send BPDUs; the lowest ID wins regardless of timing.",
+        "3": "Throughput is not part of the election; cost reflects link speed during path calculation."
+      },
+      "concepts": [
+        "STP",
+        "root bridge"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Switching",
+      "text": "MAC learning plus flooding is the mechanism that amplifies a loop."
+    },
+    {
+      "title": "Routing",
+      "text": "TTL is what makes Layer 3 loops survivable; Ethernet has no equivalent."
+    },
+    {
+      "title": "Troubleshooting",
+      "text": "'Everything is slow and interfaces look UP' should make you think loop or duplex mismatch, not DNS."
+    }
+  ],
+  "interview": [
+    {
+      "q": "What happens when you connect two switches with two links and STP is disabled?",
+      "a": "The first broadcast is flooded across both links, comes back on the other, and is re-flooded. Traffic doubles each generation, MAC tables flap between uplinks causing unicast flooding, and the broadcast domain is saturated within seconds. STP prevents this by blocking one of the redundant links so the topology is a tree."
+    },
+    {
+      "q": "What is the difference between STP and RSTP?",
+      "a": "RSTP (802.1w) converges in under a second using proposal/agreement handshakes instead of timers, has explicit port roles (alternate/backup) and edge ports that skip the learning delay. Classic STP takes 30-50 seconds. MSTP extends RSTP to map VLAN groups to independent instances."
+    }
+  ]
+}

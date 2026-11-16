@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}{{ sim.title }} — Simulation{% endblock %}
+{% block crumb %}Practise / <a href="/simulations">Simulations</a> / {{ sim.title }}{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap-wide">
+  <div class="eyebrow">module {{ sim.module_id }} &middot; {{ sim.kind }} simulator &middot; {{ sim.minutes }} min{% if state.get('completed') %} &middot; best {{ state.get('score') }}%{% endif %}</div>
+  <h1 class="mt0">{{ sim.title }}</h1>
+  <p class="lead">{{ sim.tagline }}</p>
+
+  <div class="tabs" data-tabs>
+    <button class="tab active" data-tab="sim">Simulator</button>
+    <button class="tab" data-tab="notes">Model notes</button>
+    <button class="tab" data-tab="check">Check your understanding</button>
+  </div>
+
+  <div class="tabpane active" data-pane="sim">
+    <div class="sim-shell">
+      <div>
+        <div class="sim-toolbar">
+          {% if sim.id == 'dns' %}
+          <select id="queryName" style="max-width:260px" aria-label="Name to resolve"></select>
+          <select id="queryType" style="max-width:110px" aria-label="Record type">
+            <option value="A">A</option><option value="AAAA">AAAA</option>
+            <option value="MX">MX</option><option value="TXT">TXT</option>
+            <option value="CNAME">CNAME</option><option value="SOA">SOA</option>
+          </select>
+          <select id="scenarioSelect" style="max-width:240px" aria-label="Scenario"></select>
+          {% elif sim.id == 'routing' %}
+          <select id="destSelect" style="max-width:300px" aria-label="Destination"></select>
+          <select id="faultSelect" style="max-width:280px" aria-label="Inject a fault"></select>
+          {% elif sim.id == 'dhcp' %}
+          <select id="faultSelect" style="max-width:300px" aria-label="Inject a fault"></select>
+          {% endif %}
+          <button class="btn primary" id="simNext" type="button">{% if sim.id == 'dhcp' %}Next message{% elif sim.id == 'dns' %}Resolve{% elif sim.id == 'routing' %}Trace{% else %}Next step{% endif %}</button>
+          <button class="btn ghost" id="simReset" type="button">Reset</button>
+        </div>
+
+        {% if sim.id == 'dns' %}
+        <div class="small muted mb8" id="queryNote"></div>
+        {% endif %}
+
+        <div class="sim-stage" id="simStage"></div>
+
+        <div class="card tight mt16" id="detailCard">
+          <div id="simDetail" class="small"></div>
+        </div>
+
+        {% if sim.id == 'switching' %}
+        <div class="card tight mt16">
+          <div class="card-title"><h4 class="mt0">MAC address table</h4><span class="badge mono">learned from source</span></div>
+          <div id="macTable"></div>
+        </div>
+
+        <div class="card tight mt16">
+          <div class="card-title"><h4 class="mt0">Send your own frame</h4></div>
+          <div class="field-row">
+            <label class="field" style="flex:1"><span>Source</span><select id="customSrc"></select></label>
+            <label class="field" style="flex:1"><span>Destination</span><select id="customDst"></select></label>
+            <button class="btn" id="customSend" type="button">Send</button>
+          </div>
+          <p class="small mb0">Try a broadcast, a cross-VLAN destination, or a host talking to itself.</p>
+        </div>
+        {% endif %}
+
+        {% if sim.id == 'routing' %}
+        <div class="card tight mt16">
+          <div class="card-title"><h4 class="mt0">Routing tables</h4></div>
+          <div id="tables"></div>
+        </div>
+        {% endif %}
+      </div>
+
+      <div>
+        <div class="sim-panel">
+          <h4>Event log</h4>
+          <div class="sim-log" id="simLog"></div>
+        </div>
+        <div class="sim-panel mt16">
+          <h4>What this is modelling</h4>
+          <ul class="small mb0">
+            {% for l in sim.learn %}<li style="margin-bottom:8px">{{ l }}</li>{% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabpane" data-pane="notes">
+    <div class="card">
+      <div class="card-title"><h3 class="mt0">Deliberate simplifications</h3><span class="badge warn">read this</span></div>
+      <ul class="mb0">
+        {% for s in sim.simplifications %}<li>{{ s }}</li>{% endfor %}
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><h3 class="mt0">Summary</h3></div>
+      <p class="mb0">{{ sim.summary }}</p>
+    </div>
+  </div>
+
+  <div class="tabpane" data-pane="check">
+    <div class="card">
+      <div class="card-title"><h3 class="mt0">Assessment</h3><span class="badge mono">{{ sim.assessment | length }} questions</span></div>
+      <p class="small">Pass mark 70%. This feeds directly into the module's mastery, so answer it after you have actually used the simulator above.</p>
+      <div id="simAssessment"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.NETQUEST_DATA = {{ data | tojson }};
+  window.NETQUEST_SIM = {{ sim | tojson }};
+</script>
+<script src="{{ url_for('static', filename='js/sim-common.js') }}"></script>
+{% if sim.id == 'switching' %}<script src="{{ url_for('static', filename='js/sim-switching.js') }}"></script>
+{% elif sim.id == 'dhcp' %}<script src="{{ url_for('static', filename='js/sim-dhcp.js') }}"></script>
+{% elif sim.id == 'dns' %}<script src="{{ url_for('static', filename='js/sim-dns.js') }}"></script>
+{% elif sim.id == 'routing' %}<script src="{{ url_for('static', filename='js/sim-routing.js') }}"></script>
+{% endif %}
+{% endblock %}

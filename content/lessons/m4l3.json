@@ -1,0 +1,135 @@
+{
+  "id": "m4l3",
+  "module_id": "m4",
+  "title": "TCP, UDP, ports and reading ss",
+  "minutes": 22,
+  "summary": "The transport layer is where 'is it listening?' and 'is it connected?' become answerable. Learn the socket states and the ss output that reveals them.",
+  "sections": [
+    {
+      "heading": "TCP versus UDP, honestly",
+      "html": "<table><tr><th></th><th>TCP</th><th>UDP</th></tr><tr><td>Connection</td><td>Three-way handshake, stateful</td><td>Connectionless</td></tr><tr><td>Reliability</td><td>Retransmission, ordering, flow control</td><td>None — the application decides</td></tr><tr><td>Header</td><td>20+ bytes with sequence/ack numbers</td><td>8 bytes</td></tr><tr><td>Used by</td><td>HTTP(S), SSH, most databases</td><td>DNS, DHCP, QUIC, VoIP, syslog</td></tr><tr><td>Failure signature</td><td>Refused / timeout / reset</td><td>Silent loss, application-level timeouts</td></tr></table><p>UDP has no concept of 'refused': a UDP packet to a closed port generates ICMP port-unreachable, but many applications never see it. That is why DNS problems look like timeouts rather than refusals.</p>"
+    },
+    {
+      "heading": "Ports and sockets",
+      "html": "<p>A TCP connection is identified by the 4-tuple: source IP, source port, destination IP, destination port. A <em>socket</em> is a kernel object representing one endpoint. A <em>listening</em> socket accepts new connections; an <em>established</em> one is a live connection.</p><p>Server ports below 1024 are privileged (need root or CAP_NET_BIND_SERVICE). Ephemeral client ports are typically 32768-60999 on Linux (<code>net.ipv4.ip_local_port_range</code>).</p>"
+    },
+    {
+      "heading": "ss states that matter",
+      "html": "<table><tr><th>State</th><th>Meaning</th><th>Where you see it</th></tr><tr><td>LISTEN</td><td>Waiting for connections</td><td>Server</td></tr><tr><td>SYN-SENT</td><td>SYN sent, no reply</td><td>Client — indicates a timeout forming</td></tr><tr><td>SYN-RECV</td><td>SYN received, half-open</td><td>Server — SYN flood or a broken handshake</td></tr><tr><td>ESTAB</td><td>Connection established</td><td>Both ends</td></tr><tr><td>FIN-WAIT-1/2</td><td>Local side closed, waiting</td><td>Either — app closed first</td></tr><tr><td>TIME-WAIT</td><td>Closed, waiting 2×MSL</td><td>Active closer — normal, but excessive counts hurt</td></tr><tr><td>CLOSE-WAIT</td><td>Peer closed, app has not</td><td>Server — a leak, the application forgot to close</td></tr></table><p>Two states are genuine red flags when numerous: many <code>SYN-SENT</code> means you are the one timing out; many <code>CLOSE-WAIT</code> means the application is leaking file descriptors; many <code>TIME-WAIT</code> can exhaust ephemeral ports.</p>"
+    },
+    {
+      "heading": "The ss commands worth memorising",
+      "html": "<pre><span class='c'># listening TCP with process names (the 'is it up?' command)</span>ss -ltnp\n<span class='c'># all TCP connections and their states</span>ss -tan\n<span class='c'># who is connected to port 5432?</span>ss -tnp '( sport = :5432 )'\n<span class='c'># count states - fast summary for a busy server</span>ss -tan | awk 'NR>1 {print $1}' | sort | uniq -c | sort -rn\n<span class='c'># UDP listeners (DNS, DHCP, QUIC)</span>ss -lunp\n<span class='c'># what is on a specific port, including which process</span>sudo ss -ltnp 'sport = :80'</pre><p>Sample output and how to read it:</p><pre><span class='c'>$ ss -ltnp</span>State   Recv-Q Send-Q Local Address:Port  Peer Address:Port Process\nLISTEN  0      128    0.0.0.0:22            0.0.0.0:*         users:((\"sshd\",pid=812,fd=3))\nLISTEN  0      511    127.0.0.1:5432        0.0.0.0:*         users:((\"postgres\",pid=1204,fd=7))\nLISTEN  0      511    [::]:443               [::]:*            users:((\"nginx\",pid=1330,fd=8))</pre><p>Line 2 is the key one: PostgreSQL listens on <code>127.0.0.1</code> only, so it is unreachable from the network no matter what the firewall says. Line 3 shows nginx on all IPv6 addresses (<code>[::]</code>), which usually implies all IPv4 too when dual-stack is enabled. <strong>Binding address is a security and connectivity decision</strong> — this is a real production misconfiguration and a perfect interview example.</p>"
+    },
+    {
+      "heading": "netstat and why ss replaced it",
+      "html": "<p><code>netstat</code> is deprecated on Fedora (net-tools is not installed by default). The equivalents:</p><table><tr><th>netstat</th><th>ss</th></tr><tr><td><code>netstat -tlnp</code></td><td><code>ss -ltnp</code></td></tr><tr><td><code>netstat -an</code></td><td><code>ss -tan</code></td></tr><tr><td><code>netstat -rn</code></td><td><code>ip route</code></td></tr><tr><td><code>netstat -i</code></td><td><code>ip -s link</code></td></tr></table><p>Know the mapping for interviews, and know why: <code>ss</code> reads netlink directly, so it is dramatically faster on hosts with tens of thousands of sockets. If a machine has netstat but not ss, it is probably old or an embedded image.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m4l3-1",
+      "type": "mcq",
+      "prompt": "A service is running and `ss -ltnp` shows it bound to 127.0.0.1:8080. Remote clients get 'connection refused'. Why?",
+      "options": [
+        "The firewall is blocking the port",
+        "The port is privileged",
+        "The service only listens on the loopback address, so it never accepts traffic from the network",
+        "DNS is misconfigured"
+      ],
+      "answer": 2,
+      "explanation": "A socket bound to 127.0.0.1 is unreachable from any other host. The kernel has no listener on the external address, so it sends RST — which appears as 'refused', not a timeout.",
+      "why_wrong": {
+        "0": "A firewall DROP would produce a timeout, and the binding already explains the symptom.",
+        "3": "DNS issues produce name-resolution errors, not refusals.",
+        "1": "8080 is not privileged."
+      },
+      "concepts": [
+        "socket binding",
+        "connection refused"
+      ]
+    },
+    {
+      "id": "q-m4l3-2",
+      "type": "mcq",
+      "prompt": "Which ss output pattern most strongly suggests an application leaking connections?",
+      "options": [
+        "Many LISTEN",
+        "Many SYN-RECV",
+        "Many CLOSE-WAIT",
+        "Many TIME-WAIT"
+      ],
+      "answer": 2,
+      "explanation": "CLOSE-WAIT means the peer closed and the local application has not called close(). Persistently growing CLOSE-WAIT is a descriptor leak.",
+      "why_wrong": {
+        "3": "TIME-WAIT is normal for the side that closes first.",
+        "0": "Multiple LISTEN sockets are normal.",
+        "1": "SYN-RECV suggests a handshake not completing, commonly a SYN flood."
+      },
+      "concepts": [
+        "socket states"
+      ]
+    },
+    {
+      "id": "q-m4l3-3",
+      "type": "self",
+      "prompt": "A developer says 'the API is running but nobody can reach it'. What do you check, in order, and what would each result mean?",
+      "checklist": [
+        {
+          "text": "Confirm a listener exists and on which address/port (ss -ltnp).",
+          "weight": 2
+        },
+        {
+          "text": "Distinguish 127.0.0.1 binding from 0.0.0.0/:: binding.",
+          "weight": 2
+        },
+        {
+          "text": "Check the local firewall and any cloud security group/ACL.",
+          "weight": 1
+        },
+        {
+          "text": "Test from the client: refusal means RST (no listener or reject rule), timeout means drop.",
+          "weight": 2
+        },
+        {
+          "text": "Confirm routing and that the client is using the right address (DNS may point elsewhere).",
+          "weight": 1
+        },
+        {
+          "text": "Check the service's own logs for bind errors or startup failures.",
+          "weight": 1
+        }
+      ],
+      "reference": "<p>First prove a listener exists and note its address: <code>ss -ltnp</code>. If it is bound to 127.0.0.1, that alone explains the failure. If it is on 0.0.0.0 or a specific external address, test from the client and read the error precisely: immediate refusal means an RST reached you (listener absent on that address, or a reject rule); a hang means packets are dropped (firewall, security group, wrong route). Check the service logs for bind errors and confirm the client is connecting to the address DNS actually returns. Order matters because each step eliminates a whole class of cause.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "listeners",
+        "firewall reasoning"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "DNS",
+      "text": "Resolution gets you an address; the socket decides whether anything answers on that address and port."
+    },
+    {
+      "title": "Firewalls",
+      "text": "DROP gives timeout, REJECT gives refusal — the difference is a firewall policy signal."
+    },
+    {
+      "title": "Process management",
+      "text": "ss -p links a port to a PID, which is how you find the process that owns the socket."
+    }
+  ],
+  "interview": [
+    {
+      "q": "What is the difference between connection refused and connection timed out?",
+      "a": "Refused means a TCP RST came back — the host is reachable and nothing is listening (or a reject rule fired). Timed out means no response at all — a DROP rule, a dead host, or a black-holed route. Refusal is fast and specific; timeout is silent."
+    },
+    {
+      "q": "How do you find which process listens on a port?",
+      "a": "sudo ss -ltnp with a filter for the port, which shows the PID and process name. lsof -i :port and fuser also work. If the process is in another namespace or container, you need to run the tool inside that namespace."
+    }
+  ]
+}

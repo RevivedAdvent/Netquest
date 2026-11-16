@@ -1,0 +1,91 @@
+{
+  "id": "m2l1",
+  "module_id": "m2",
+  "title": "What a switch is, and the frame it reads",
+  "minutes": 18,
+  "summary": "A switch is a Layer 2 device whose entire job is to move Ethernet frames between ports using MAC addresses. To reason about it, you need the frame fields it actually looks at.",
+  "sections": [
+    {
+      "heading": "Ethernet frames: only four fields matter for switching",
+      "html": "<p>A frame on the wire is bytes, not a diagram, but the fields a switch reads are these:</p><pre>+------------------+------------------+-----------+---------------------+-----+| dst MAC (6 bytes) | src MAC (6 bytes) | 802.1Q?   | EtherType (2 bytes) | ... |+------------------+------------------+-----------+---------------------+-----+| FCS (4 bytes) at the very end                                    |</pre><table><tr><th>Field</th><th>Why the switch cares</th></tr><tr><td>Destination MAC</td><td>Lookup key for the forwarding decision</td></tr><tr><td>Source MAC</td><td>Lookup key for learning</td></tr><tr><td>Optional 802.1Q tag</td><td>VLAN membership on a trunk</td></tr><tr><td>EtherType</td><td>Usually ignored for forwarding; tells the receiver whether it is IPv4 (0x0800), IPv6 (0x86DD), ARP (0x0806) or 802.1Q (0x8100)</td></tr></table><p>The minimum frame is 64 bytes including FCS; smaller frames are <em>runts</em> and are discarded. Maximum payload is 1500 bytes by default (MTU), so the maximum frame is 1518 bytes — 1522 with a VLAN tag. MTU is a Layer 3 concern, but oversized frames are dropped at Layer 2, which is why 'ping works, big transfers stall' often points at MTU or a broken path MTU discovery.</p>"
+    },
+    {
+      "heading": "MAC addresses are flat, and that shapes the switch",
+      "html": "<p>A MAC is 48 bits: 24 bits OUI (vendor) plus 24 bits assigned by the vendor. It is <strong>flat</strong> — there is no hierarchy and therefore no way to summarise a range of MACs. IP is hierarchical, which is why routers can hold a routing table with a few hundred thousand entries while switches must learn individual addresses.</p><p>Two consequences:</p><ul><li>Switches must learn per-address, which is why MAC tables have finite size and overflow into flooding.</li><li>MAC addresses have no location meaning. A MAC in VLAN 10 says nothing about VLAN 20; that is why broadcast domains are enforced separately by VLAN membership.</li></ul><p>Also worth knowing: <code>01:00:5e:...</code> and <code>33:33:...</code> are multicast; <code>ff:ff:ff:ff:ff:ff</code> is broadcast; the second-least-significant bit of the first octet marks locally administered addresses (common with virtualisation).</p>"
+    },
+    {
+      "heading": "Switch versus hub versus router",
+      "html": "<table><tr><th></th><th>Hub</th><th>Switch</th><th>Router</th></tr><tr><td>Layer</td><td>1</td><td>2</td><td>3</td></tr><tr><td>Forwards by</td><td>Nothing — repeats bits to all ports</td><td>Destination MAC</td><td>Destination IP / routing table</td></tr><tr><td>Collision domain</td><td>One shared domain</td><td>One per port (full duplex)</td><td>One per port</td></tr><tr><td>Broadcast domain</td><td>One</td><td>One per VLAN</td><td>Separate per interface by default</td></tr><tr><td>Blocks broadcasts?</td><td>No</td><td>No (only separates VLANs)</td><td>Yes</td></tr></table><p>The historical collision-domain point matters in interviews: with hubs, CSMA/CD managed shared media and every host heard every frame. Switches removed the shared medium, so <em>collision domains</em> became per-port and CSMA/CD is effectively obsolete on switched full-duplex links. Broadcast domains did <em>not</em> disappear with switches — they moved to VLAN boundaries.</p><div class='note'><b>Common misconception:</b> 'A switch breaks up broadcast domains.' It does not, unless you configure VLANs. A 48-port switch with one VLAN is one broadcast domain with 48 collision domains.</div>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m2l1-1",
+      "type": "mcq",
+      "prompt": "Which statement about collision and broadcast domains on a single VLAN is correct?",
+      "options": [
+        "One collision domain and one broadcast domain",
+        "One collision domain and one broadcast domain per port",
+        "One collision domain per port and one broadcast domain",
+        "One collision domain per port and one broadcast domain per port"
+      ],
+      "answer": 2,
+      "explanation": "A switch gives each port its own collision domain (full duplex, no shared medium) but the whole VLAN remains one broadcast domain.",
+      "why_wrong": {
+        "0": "That describes a hub.",
+        "1": "Broadcast domains are per-VLAN, not per-port.",
+        "3": "That would mean every port is isolated, which only happens with port isolation features."
+      },
+      "concepts": [
+        "broadcast domain",
+        "collision domain"
+      ]
+    },
+    {
+      "id": "q-m2l1-2",
+      "type": "mcq",
+      "prompt": "A frame arrives with destination ff:ff:ff:ff:ff:ff. What does the switch do?",
+      "options": [
+        "Floods it to every port in the VLAN except the ingress port",
+        "Sends it to the router",
+        "Sends it only to the port where that MAC was learned",
+        "Drops it as invalid"
+      ],
+      "answer": 0,
+      "explanation": "The all-ones destination is broadcast, so it must reach every station in the broadcast domain.",
+      "why_wrong": {
+        "2": "There is no table entry for a broadcast address to learn.",
+        "3": "Broadcasts are valid and essential for ARP and DHCP.",
+        "1": "Switches do not forward broadcasts to a router by default."
+      },
+      "concepts": [
+        "broadcast",
+        "flooding"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "ARP",
+      "text": "ARP requests are broadcasts — they are flooded exactly as this lesson describes, which is why a large flat VLAN gets noisy."
+    },
+    {
+      "title": "IP addressing",
+      "text": "A VLAN should map one-to-one with a subnet. Mismatched VLAN/subnet design is a classic source of one-way communication."
+    },
+    {
+      "title": "Routing",
+      "text": "Routers terminate broadcast domains. The first router hop is where intra-VLAN switching ends and IP forwarding begins."
+    }
+  ],
+  "interview": [
+    {
+      "q": "What is the difference between a switch and a router?",
+      "a": "A switch forwards frames within a Layer 2 broadcast domain using MAC addresses learned from traffic; it does not decrement TTL or rewrite IP. A router forwards packets between Layer 3 networks using the destination IP and a routing table, decrements TTL, rewrites the link-layer header per hop, and terminates broadcasts."
+    },
+    {
+      "q": "Why does a switch need a MAC table at all?",
+      "a": "Because MAC addresses are flat, there is no summary or hierarchy the switch can use to infer a location. It must learn which interface each address is reachable through, and flood when it does not know."
+    }
+  ]
+}

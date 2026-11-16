@@ -1,0 +1,95 @@
+{
+  "id": "m7l2",
+  "module_id": "m7",
+  "title": "ps, top, systemctl and journalctl in practice",
+  "minutes": 20,
+  "summary": "The commands that answer 'what is running', 'why is it slow' and 'why did it fail to start' — with the output details that matter.",
+  "sections": [
+    {
+      "heading": "ps: precise, scriptable",
+      "html": "<pre><span class='c'># top CPU consumers with parent and user</span>ps -eo pid,ppid,user,stat,pcpu,pmem,etime,cmd --sort=-pcpu | head -12\n<span class='c'># full command line for one process</span>ps -fp 4242\n<span class='c'># process tree (see who spawned what)</span>ps -ef --forest | less\n<span class='c'># threads of a process</span>ps -T -p 4242\n<span class='c'># find by name</span>pgrep -a nginx</pre><p>Reading the columns: <code>STAT</code> is the state (see the previous lesson), <code>etime</code> is elapsed time since start (useful to spot a process that restarted recently), <code>pcpu</code> is average CPU over the process's lifetime — not instantaneous, which is why a process that spiked and settled can look calm in <code>ps</code> but hot in <code>top</code>.</p>"
+    },
+    {
+      "heading": "top and htop: live view",
+      "html": "<p>Useful keys in <code>top</code>: <code>P</code> sort by CPU, <code>M</code> sort by memory, <code>H</code> show threads, <code>1</code> per-CPU breakdown, <code>c</code> full command line, <code>k</code> kill (avoid — use <code>kill</code> deliberately).</p><p>Read the header before the process list:</p><pre>top - 12:04:11 up 3 days,  2:11,  2 users,  load average: 4.12, 3.80, 2.95\nTasks: 214 total,   2 running, 211 sleeping,   0 stopped,   1 zombie\n%Cpu(s): 62.3 us,  4.1 sy,  0.0 ni, 30.1 id,  3.2 wa,  0.0 hi,  0.3 si\nMiB Mem :   7862.0 total,    412.3 free,   5210.4 used,   2239.3 buff/cache\nMiB Swap:   2048.0 total,   2048.0 free,      0.0 used</pre><ul><li><strong>load average</strong> counts runnable <em>and</em> uninterruptible tasks. Compare with core count: 4.12 on 4 cores is saturated; on 16 cores it is fine.</li><li><strong>wa (iowait)</strong> high means processes are waiting on storage — renicing will not help.</li><li><strong>sy (system)</strong> high suggests syscall or context-switch overhead, often networking or many small IO operations.</li><li><strong>buff/cache</strong> is not 'used' in the problematic sense; Linux uses free memory for cache and reclaims it on demand.</li><li><strong>1 zombie</strong> is usually harmless; hundreds indicate a parent that never reaps.</li></ul>"
+    },
+    {
+      "heading": "systemd: services versus processes",
+      "html": "<p>A <em>process</em> is a running program. A <em>service</em> (unit) is a managed resource with a lifecycle, dependencies, restart policy, resource limits and logging. systemd is PID 1: it starts units, tracks them, restarts them on failure and collects their output into the journal.</p><pre><span class='c'># state, exit code and recent log lines in one view</span>systemctl status myapp.service\n<span class='c'># is it enabled at boot? is it active now?</span>systemctl is-enabled myapp; systemctl is-active myapp\n<span class='c'># what does the unit actually run?</span>systemctl cat myapp.service\n<span class='c'># effective settings after drop-ins</span>systemctl show -p User,Group,ExecStart,Restart,TimeoutStopSec myapp\n<span class='c'># lifecycle</span>sudo systemctl restart myapp\nsudo systemctl reload myapp      <span class='c'># only if the unit defines ExecReload</span>\n<span class='c'># why did it fail?</span>journalctl -u myapp -n 80 --no-pager\njournalctl -u myapp --since '10 min ago' -p err</pre><p>The distinction that matters in an interview: <code>systemctl restart</code> asks systemd to stop and start the unit, applying the unit's stop signal and timeout. <code>kill</code> acts on a process and bypasses all of that — including any restart policy, which may then immediately restart it and confuse you.</p>"
+    },
+    {
+      "heading": "journalctl: reading logs properly",
+      "html": "<pre><span class='c'># this boot, errors only</span>journalctl -b -p err --no-pager\n<span class='c'># follow a unit live</span>journalctl -u myapp -f\n<span class='c'># time-bounded (incident window)</span>journalctl --since '2026-11-17 09:00' --until '2026-11-17 09:30'\n<span class='c'># kernel messages (interface flaps, OOM killer)</span>journalctl -k -b | tail -40\n<span class='c'># disk usage of the journal itself</span>journalctl --disk-usage</pre><p>Two things to look for specifically: the <strong>OOM killer</strong> (<code>Out of memory: Killed process 4242 (java)</code>) which explains a service that 'randomly died', and <strong>interface events</strong> (<code>eth0: link is not ready</code>) which explain network blips. Both live in the kernel log, not the application log, which is why people miss them.</p><p>If a service logs to a file instead of the journal, the unit's <code>StandardOutput=</code> setting tells you where. <code>systemctl cat</code> is the fastest way to find out.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m7l2-1",
+      "type": "mcq",
+      "prompt": "A service died overnight with no application error in its own log. Where do you look next?",
+      "options": [
+        "The DNS resolver",
+        "journalctl -k for the OOM killer or kernel events",
+        "The application's config file",
+        "ip route"
+      ],
+      "answer": 1,
+      "explanation": "A process killed by the kernel (OOM) logs nothing itself; the evidence is in the kernel journal.",
+      "why_wrong": {
+        "2": "Config errors usually appear at startup, not as a silent overnight death.",
+        "3": "Routing does not kill processes.",
+        "0": "DNS failures do not terminate a process."
+      },
+      "concepts": [
+        "journalctl",
+        "OOM killer"
+      ]
+    },
+    {
+      "id": "q-m7l2-2",
+      "type": "mcq",
+      "prompt": "Load average is 8.0 on a 4-core machine with low CPU usage and high iowait. What is the most likely cause?",
+      "options": [
+        "Too many CPU-bound processes",
+        "A memory leak",
+        "A DNS problem",
+        "Processes blocked on storage IO, which also count toward load"
+      ],
+      "answer": 3,
+      "explanation": "Load average includes uninterruptible (D state) tasks. High iowait with low CPU points at storage.",
+      "why_wrong": {
+        "0": "That would show high user CPU, not high iowait.",
+        "1": "Memory pressure would show in swap and free memory.",
+        "2": "DNS delays appear as socket waits, not sustained iowait."
+      },
+      "concepts": [
+        "load average",
+        "iowait"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Sockets",
+      "text": "ss -ltnp links a listening port to a PID, which is how you go from 'port closed' to 'process not running'."
+    },
+    {
+      "title": "Permissions",
+      "text": "A unit's User= setting determines which files it can read — the join with Module 6."
+    },
+    {
+      "title": "Case study 9",
+      "text": "The service listening mission is solved with exactly these commands."
+    }
+  ],
+  "interview": [
+    {
+      "q": "How do you investigate a failed systemd service?",
+      "a": "systemctl status for the exit code and recent lines, then journalctl -u for the full log, then systemctl cat to confirm what it actually runs and with which User/EnvironmentFile. Check the kernel log for OOM kills if the process died without logging."
+    },
+    {
+      "q": "What is the difference between a process and a service?",
+      "a": "A process is a running program with a PID. A service is a systemd unit that manages a process or group of processes: it defines how to start and stop it, dependencies, restart policy, resource limits and where output goes."
+    }
+  ]
+}

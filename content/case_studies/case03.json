@@ -1,0 +1,113 @@
+{
+  "id": "case03",
+  "order": 3,
+  "title": "The five-second stall",
+  "module_id": "m3",
+  "difficulty": "core",
+  "tagline": "Every page load hangs for five seconds, then succeeds. Users call it 'a slow network'. The network is fine.",
+  "environment": ["Fedora workstation", "Internal resolver 10.10.0.53 forwarding to 8.8.8.8", "Corporate proxy for external HTTP", "Application that talks to api.partner.example"],
+  "topology": "workstation --> resolver 10.10.0.53 --> forwarder 8.8.8.8 ; workstation --> proxy --> partner API",
+  "symptoms": [
+    "Page loads and CLI tools pause for about five seconds, then complete",
+    "The pause happens once per name per process, then things are fast",
+    "Ping to the destination IP is fast and lossless",
+    "Nothing appears in the application's own log except a long duration"
+  ],
+  "objectives": [
+    "Separate latency that comes from name resolution from latency that comes from transport",
+    "Read dig output for answer time versus timeout and retry behaviour",
+    "Recognise that a timeout has to expire before a fallback can succeed"
+  ],
+  "tools": ["dig", "time getent hosts", "resolvectl query", "tcpdump port 53", "curl -w"],
+  "framework": [
+    "Is the delay before or after the TCP connection is established?",
+    "Does the delay scale with the number of distinct names?",
+    "Is the resolver answering, failing, or silent?"
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "label": "Time the lookup separately from the request",
+      "command": "time getent hosts api.partner.example",
+      "output": "real\t0m5.012s\nuser\t0m0.003s\nsys\t0m0.001s",
+      "insight": "Five seconds is spent in the name lookup itself. user/sys time is negligible, so it is waiting, not computing — the signature of a DNS timeout.",
+      "requires": []
+    },
+    {
+      "id": "e2",
+      "label": "Second lookup, same process",
+      "command": "time getent hosts api.partner.example",
+      "output": "real\t0m0.004s\nuser\t0m0.002s\nsys\t0m0.001s",
+      "insight": "The second lookup is instant because it was cached. That is why users describe it as 'sometimes slow' — it depends on cache state.",
+      "requires": ["e1"]
+    },
+    {
+      "id": "e3",
+      "label": "Ask the resolver directly and read the timing",
+      "command": "dig api.partner.example | grep -E 'status|Query time|SERVER'",
+      "output": ";; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 33214\n;; Query time: 5000 msec\n;; SERVER: 10.10.0.53#53(10.10.0.53)",
+      "insight": "NOERROR after 5000ms. The resolver eventually answered, so the delay is inside the resolver's own upstream attempt, not a dropped response to the client.",
+      "requires": ["e2"]
+    },
+    {
+      "id": "e4",
+      "label": "Where the resolver's own query goes",
+      "command": "sudo tcpdump -ni any udp port 53 and host 8.8.8.8 -c 6",
+      "output": "10:11:02.101 IP 10.10.0.53.41022 > 8.8.8.8.53: 52313+ A? api.partner.example. (46)\n10:11:07.104 IP 10.10.0.53.41022 > 8.8.8.8.53: 52313+ A? api.partner.example. (46)\n10:11:12.107 IP 10.10.0.53.41022 > 8.8.8.8.53: 52313+ A? api.partner.example. (46)",
+      "insight": "The forwarder sends three retries five seconds apart and gets nothing back. UDP 53 to 8.8.8.8 is being blackholed, so every uncached name costs at least one five-second timeout.",
+      "requires": ["e3"]
+    },
+    {
+      "id": "e5",
+      "label": "Confirm the internal view still works",
+      "command": "dig +short @10.10.0.53 wiki.corp.example",
+      "output": "10.10.5.20",
+      "insight": "Names in zones the resolver is authoritative for are answered instantly from local data, which is why internal sites feel fast and external ones stall.",
+      "requires": ["e4"]
+    },
+    {
+      "id": "e6",
+      "label": "Rule out transport latency",
+      "command": "ping -c4 203.0.113.20",
+      "output": "4 packets transmitted, 4 received, 0% packet loss, time 3004ms\nrtt min/avg/max/mdev = 11.2/12.0/13.4/0.8 ms",
+      "insight": "12ms average to the destination IP proves the path is fast. The user experience is dominated entirely by name resolution.",
+      "requires": ["e5"]
+    }
+  ],
+  "hypotheses": [
+    {"text": "The network path to the partner is slow.", "verdict": "rejected", "why": "Ping to the destination address is 12ms with no loss, and the delay disappears once the name is cached."},
+    {"text": "The resolver's upstream forwarder is unreachable, so each uncached lookup waits for a timeout.", "verdict": "accepted", "why": "dig reports 5000ms with NOERROR, and the capture shows three unanswered queries to 8.8.8.8 at five-second intervals."},
+    {"text": "The application has a five-second retry.", "verdict": "rejected", "why": "A system tool (getent) reproduces the same five seconds without the application involved."},
+    {"text": "The DNS record has a very short TTL.", "verdict": "rejected", "why": "Short TTLs cause more queries, not multi-second stalls; the stall is a timeout, not a refresh."}
+  ],
+  "min_evidence": 3,
+  "diagnosis_accept": ["forwarder", "upstream", "8.8.8.8", "timeout", "unreachable from the resolver", "queries to 8.8.8.8"],
+  "diagnosis_reject": ["slow network", "bandwidth", "the application retries", "packet loss on the lan", "the record is wrong"],
+  "solution": {
+    "root_cause": "The internal resolver forwards external names to 8.8.8.8, but UDP 53 to that address is being blackholed at the network edge. Every uncached external lookup therefore waits for a full timeout (and retries) before the client is answered, producing a consistent five-second pause. Internal zones are answered locally, so they feel instant.",
+    "resolution": "Restore working upstream DNS: either allow UDP/TCP 53 from the resolver to 8.8.8.8, or point the resolver at an upstream that is reachable (the corporate forwarder, or a local recursive resolver). Consider enabling a local cache with prefetching so expiry does not translate into a user-visible stall.",
+    "verification": "dig for an external name returns in tens of milliseconds with a non-zero TTL; tcpdump shows the upstream query answered on the first attempt; user-visible pauses disappear for cold-cache names, not just cached ones.",
+    "lessons": [
+      "A timeout is silent — there is no error from the far end. That is what makes it look like 'slowness' rather than 'breakage'.",
+      "Cache state explains intermittency. Anything that varies between first and second attempt is a cache or timeout signature.",
+      "Two independent tools (getent and dig) agreeing on the delay, plus a capture showing retries, turns a vague complaint into a specific defect."
+    ],
+    "interview_followups": [
+      "Why does dig show NOERROR if the upstream never answered?",
+      "How would you prove the timeout is on the resolver's egress rather than on the client?",
+      "What are the trade-offs of running a local recursive resolver?"
+    ]
+  },
+  "resolution_options": [
+    {"text": "Allow the resolver's UDP/TCP 53 traffic to its upstream", "correct": true, "why": "Removes the blackhole that causes every cold lookup to wait for a timeout."},
+    {"text": "Point the resolver at a reachable upstream forwarder", "correct": true, "why": "Equally valid and often faster to implement than a firewall change."},
+    {"text": "Add every external name to /etc/hosts", "correct": false, "why": "Unmaintainable and does not fix the resolver for anyone else."},
+    {"text": "Increase the client's DNS timeout", "correct": false, "why": "Makes every cold lookup slower, not faster."},
+    {"text": "Blame the application and add a retry", "correct": false, "why": "The application is not the source; a system tool reproduces the delay."}
+  ],
+  "interview_questions": [
+    {"q": "A user says 'the network is slow but ping is fine'. What does that suggest?", "a": "Latency that is not in the forwarding path: name resolution, TCP handshake, TLS, or an application-level dependency. Timing the phases separately is the fastest way to localise it."},
+    {"q": "What is the difference between a timeout, a refusal and a server failure in DNS?", "a": "Timeout means silence — wrong address, filtered path or dead server. REFUSED means the server declined to answer for policy reasons. SERVFAIL means the server tried and could not complete the lookup, often DNSSEC or a broken upstream."},
+    {"q": "How do you make DNS failures visible before users notice them?", "a": "Monitor resolution latency for a set of known names from each site, and alert on cold-cache query time rather than only on failure counts."}
+  ]
+}

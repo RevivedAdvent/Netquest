@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Settings — NetQuest{% endblock %}
+{% block crumb %}System / Settings{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap">
+  <div class="eyebrow">Local &middot; single user &middot; no account, no telemetry</div>
+  <h1 class="mt0">Settings</h1>
+  <p class="lead">Interview date drives the countdown and the recommended pace. Accelerated mode pulls core networking modules forward and deprioritises Linux.</p>
+
+  <div class="card">
+    <div class="card-title"><h3 class="mt0">Preparation</h3><span class="badge mono">{{ days }} days left</span></div>
+    <form id="settingsForm" onsubmit="return false">
+      <div class="field-row">
+        <label class="field" style="max-width:190px">
+          <span>Interview date</span>
+          <input type="date" id="interviewDate" value="{{ interview_date }}">
+        </label>
+        <label class="field" style="max-width:190px">
+          <span>Daily target (minutes)</span>
+          <input type="number" id="dailyTarget" min="10" max="480" step="5" value="{{ daily_target }}">
+        </label>
+        <label class="field" style="max-width:240px">
+          <span>Your name (optional)</span>
+          <input type="text" id="nameField" value="{{ name }}" placeholder="Used in the dashboard only">
+        </label>
+      </div>
+
+      <label class="checkitem" style="border-bottom:0">
+        <input type="checkbox" id="accelerated" {{ 'checked' if accelerated }}>
+        <span><b>Accelerated mode</b> — prioritise interview-critical networking in the recommendations.</span>
+      </label>
+
+      <div class="btn-row mt16">
+        <button class="btn primary" id="saveBtn" type="button">Save settings</button>
+        <span class="small muted" id="saveNote"></span>
+      </div>
+    </form>
+  </div>
+
+  <div class="card tight">
+    <div class="card-title"><h3 class="mt0">Diagnostic</h3>
+      <span class="badge {{ 'ok' if diagnostic_done else 'warn' }}">{{ 'completed' if diagnostic_done else 'not run' }}</span>
+    </div>
+    <p class="small">{% if diagnostic_done %}Recorded average {{ diagnostic_score }}%. Re-running it re-orders the learning path from your current answers.{% else %}Running it is the fastest way to avoid studying what you already know.{% endif %}</p>
+    <a class="btn small" href="/diagnostic">{{ 'Re-run' if diagnostic_done else 'Run' }} the diagnostic</a>
+  </div>
+
+  <div class="card tight">
+    <div class="card-title"><h3 class="mt0">Data</h3></div>
+    <table>
+      <tr><th>Item</th><th>Where</th></tr>
+      <tr><td>Curriculum, labs, cases</td><td class="mono small">content/*.json (plain files, editable)</td></tr>
+      <tr><td>Progress, XP, attempts</td><td class="mono small">netquest.db (SQLite, local)</td></tr>
+      <tr><td>Pasted terminal output</td><td class="small">never stored — graded, then discarded</td></tr>
+      <tr><td>Outbound network calls</td><td class="small">none</td></tr>
+    </table>
+    <p class="small mb0">Back up <code>netquest.db</code> if you want to move your progress to another machine.</p>
+  </div>
+
+  <div class="card" style="border-left:3px solid #555">
+    <div class="card-title"><h3 class="mt0">Reset progress</h3><span class="badge warn">irreversible</span></div>
+    <p class="small">Erases attempts, lesson and lab progress, case study evidence, XP and interview sessions. Your content files and settings are untouched.</p>
+    <div class="btn-row">
+      <input type="text" id="resetConfirm" placeholder='Type RESET to confirm' style="max-width:220px">
+      <button class="btn danger" id="resetBtn" type="button">Erase all progress</button>
+    </div>
+    <div id="resetResult" class="mt8"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+  var btn = document.getElementById("saveBtn");
+  btn.addEventListener("click", function () {
+    btn.disabled = true;
+    NetQuest.post("/api/settings", {
+      interview_date: document.getElementById("interviewDate").value,
+      daily_target_minutes: document.getElementById("dailyTarget").value,
+      name: document.getElementById("nameField").value,
+      accelerated_mode: document.getElementById("accelerated").checked
+    }).then(function (data) {
+      document.getElementById("saveNote").textContent =
+        "Saved — " + data.days_remaining + " days to " + data.interview_date +
+        (data.accelerated ? ", accelerated mode on" : "");
+      NetQuest.toast("Settings saved");
+      btn.disabled = false;
+    }).catch(function (e) {
+      document.getElementById("saveNote").textContent = e.message;
+      btn.disabled = false;
+    });
+  });
+
+  document.getElementById("resetBtn").addEventListener("click", function () {
+    var v = document.getElementById("resetConfirm").value.trim();
+    if (v !== "RESET") {
+      document.getElementById("resetResult").innerHTML =
+        '<div class="feedback bad">Type RESET exactly to confirm. Nothing has been erased.</div>';
+      return;
+    }
+    NetQuest.post("/api/settings/reset", { confirm: "RESET" }).then(function () {
+      document.getElementById("resetResult").innerHTML =
+        '<div class="feedback ok">Progress erased. Reload the dashboard to start again.</div>';
+      NetQuest.toast("Progress erased");
+    }).catch(function (e) {
+      document.getElementById("resetResult").innerHTML =
+        '<div class="feedback bad">' + NetQuest.escape(e.message) + "</div>";
+    });
+  });
+})();
+</script>
+{% endblock %}

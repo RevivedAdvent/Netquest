@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% from "_checks.html" import checks %}
+{% block title %}{{ module.title }} — NetQuest{% endblock %}
+{% block crumb %}Study / {{ module.title }}{% endblock %}
+{% block mastery_pct %}<span id="lessonMastery">{{ stats.mastery }}%</span>{% endblock %}
+
+{% block content %}
+<div class="wrap-wide">
+  <div class="eyebrow">Module {{ module.number }} &middot; {{ module.priority }} priority &middot; {{ module.estimated_minutes }} minutes &middot; weight {{ module.weight }}</div>
+  <h1 class="mt0">{{ module.title }}</h1>
+  <p class="lead">{{ module.summary }}</p>
+
+  <div class="grid grid-4 mb16">
+    <div class="stat"><div class="label">Mastery</div><div class="value">{{ stats.mastery }}%</div>
+      <div class="bar mt8"><span style="width: {{ stats.mastery }}%"></span></div></div>
+    <div class="stat"><div class="label">Lessons</div><div class="value">{{ stats.lessons_completed }}/{{ stats.lessons_total }}</div>
+      <div class="sub">checks {{ stats.checks_percent }}%</div></div>
+    <div class="stat"><div class="label">Labs</div><div class="value">{{ stats.labs_done }}/{{ stats.labs_total }}</div>
+      <div class="sub">{{ stats.labs_real_done }} with real output</div></div>
+    <div class="stat"><div class="label">Case studies</div><div class="value">{{ stats.missions_solved }}/{{ stats.missions_total }}</div>
+      <div class="sub">assessment {{ stats.assessment_percent }}%</div></div>
+  </div>
+
+  <div class="grid grid-hero">
+    <div>
+      <div class="card">
+        <div class="card-title"><h3 class="mt0">Objectives</h3></div>
+        <ul class="mb0">
+          {% for o in module.objectives %}<li>{{ o }}</li>{% endfor %}
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <h3 class="mt0">Lessons</h3>
+          <span class="badge mono">{{ stats.lessons_completed }}/{{ stats.lessons_total }}</span>
+        </div>
+        <ol class="list-plain">
+          {% for l in module.lessons %}
+          {% set st = lesson_states.get(l.id, {}) %}
+          <li class="split">
+            <div style="min-width:0">
+              <a href="/lesson/{{ l.id }}"><b>{{ l.title }}</b></a>
+              <div class="small muted">{{ l.minutes }} min &middot; {{ l.summary | truncate(110) }}</div>
+            </div>
+            <div class="right" style="min-width:90px">
+              {% if st.completed %}<span class="badge ok">done</span>
+              {% elif st.last_accessed %}<span class="badge warn">in progress</span>
+              {% else %}<span class="badge">new</span>{% endif %}
+            </div>
+          </li>
+          {% endfor %}
+        </ol>
+      </div>
+
+      {% if module.assessment %}
+      <div class="card" id="assessment">
+        <div class="card-title">
+          <h3 class="mt0">Module assessment</h3>
+          <span class="badge mono">{{ stats.assessment_percent }}%</span>
+        </div>
+        <p class="small">This is 15% of the module's mastery. The pass mark is 80% for a 'mastered' module.</p>
+        {{ checks(module.assessment, module.id, 'Assessment') }}
+      </div>
+      {% endif %}
+    </div>
+
+    <div>
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Key questions to answer</h3></div>
+        <ul class="small mb0">
+          {% for k in module.key_questions %}<li>{{ k }}</li>{% endfor %}
+        </ul>
+      </div>
+
+      {% if labs %}
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Command labs</h3><a class="btn ghost small" href="/labs">All</a></div>
+        {% for l in labs %}
+        <div class="split" style="padding:7px 0; border-bottom:1px solid #262626">
+          <div><a href="/labs/{{ l.id }}" class="mono">{{ l.command }}</a>
+            <div class="small muted">{{ l.tagline | truncate(64) }}</div></div>
+          <span class="badge small">lab</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if sims %}
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Simulators</h3></div>
+        {% for s in sims %}
+        <div style="padding:7px 0; border-bottom:1px solid #262626">
+          <a href="/simulations/{{ s.id }}"><b>{{ s.title }}</b></a>
+          <div class="small muted">{{ s.tagline }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if missions %}
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Case studies</h3><a class="btn ghost small" href="/missions">All</a></div>
+        {% for m in missions %}
+        <div style="padding:7px 0; border-bottom:1px solid #262626">
+          <a href="/missions/{{ m.id }}"><b>{{ m.title }}</b></a>
+          <div class="small muted">{{ m.tagline | truncate(72) }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Related</h3></div>
+        <div class="pill-row">
+          <a class="btn small ghost" href="/connections">Journeys</a>
+          <a class="btn small ghost" href="/revision">Revision</a>
+          <a class="btn small ghost" href="/interview">Mock interview</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/quiz.js') }}"></script>
+{% endblock %}

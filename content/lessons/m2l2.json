@@ -1,0 +1,106 @@
+{
+  "id": "m2l2",
+  "module_id": "m2",
+  "title": "MAC learning and the five-step forwarding decision",
+  "minutes": 20,
+  "summary": "Every frame is processed with the same five steps. Learn them precisely — this is one of the most frequently asked switching questions and the basis of the simulator.",
+  "sections": [
+    {
+      "heading": "The five steps, in order",
+      "html": "<ol class='steps'><li><b>Frame arrives.</b> The switch detects the start of frame delimiter, checks the FCS (optionally), and buffers enough of the frame to read the headers.</li><li><b>Read the source MAC.</b> This is the only information the switch uses to learn.</li><li><b>Learn.</b> The switch associates <code>src MAC -&gt; ingress port</code> in the MAC address table, starts/refreshes the aging timer (300s default). If the MAC was on another port, the entry is <em>moved</em>.</li><li><b>Look up the destination MAC.</b> Three outcomes: known (unicast, one port), unknown (flood), or multicast/broadcast (flood).</li><li><b>Decide and act.</b> Forward (out the mapped port), filter (drop, because the destination is on the ingress port), or flood (all ports in the VLAN except ingress).</li></ol><p>Two details interviewers like: learning happens <em>before</em> forwarding (so a host that has never spoken is still unknown), and the source MAC is learned even if the frame is later filtered or dropped.</p>"
+    },
+    {
+      "heading": "Worked example",
+      "html": "<p>Switch with ports 1-4 in VLAN 10. Table starts empty.</p><table><tr><th>#</th><th>Event</th><th>Learning</th><th>Forwarding</th></tr><tr><td>1</td><td>A (port 1) sends to B (unknown)</td><td>A -&gt; 1</td><td>Flood to 2,3,4</td></tr><tr><td>2</td><td>B (port 3) replies to A</td><td>B -&gt; 3</td><td>Known destination A: forward only to port 1</td></tr><tr><td>3</td><td>A broadcasts (ARP for gateway)</td><td>refresh A -&gt; 1</td><td>Flood to 2,3,4</td></tr><tr><td>4</td><td>C on port 1 sends to A on port 1</td><td>C -&gt; 1</td><td>Filter (destination is on the ingress port)</td></tr><tr><td>5</td><td>A goes silent 5 minutes</td><td>Entry ages out</td><td>Traffic to A floods again until it speaks</td></tr></table><p>Step 4 surprises people: a switch does not need to forward a frame back to the port it came from. In practice with a downstream hub or a virtual switch this can matter, but for a normal access port it is a filter.</p>"
+    },
+    {
+      "heading": "Why flooding is normal, and when it becomes a problem",
+      "html": "<p>Core switches flood every unknown unicast, every broadcast and every multicast. That is by design: it is how ARP, DHCP and neighbour discovery work. It becomes a problem when:</p><ul><li><strong>MAC table overflow</strong> — a switch learns so many addresses that the table fills, and legitimate unicast is flooded to every port (a 'MAC flooding' attack does exactly this deliberately).</li><li><strong>Aging churn</strong> — a device that only receives is never learned, so all traffic to it floods forever.</li><li><strong>Large flat VLANs</strong> — thousands of hosts means thousands of ARP broadcasts per second.</li><li><strong>Loops</strong> — broadcasts are reflooded indefinitely and the network saturates in seconds. This is why STP exists.</li></ul><p>On Linux you can observe the effects of a flat segment with <code>tcpdump -i eth0 -e arp</code> and see how much broadcast traffic exists on a busy LAN.</p>"
+    },
+    {
+      "heading": "Inside the simulator",
+      "html": "<p>The Switching Lab models these five steps exactly with a small number of ports and a deterministic frame generator. It is a teaching model, not an Ethernet stack: it does not model FCS errors, auto-negotiation, or buffering/head-of-line blocking. Those are labelled simplifications in the simulator itself.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m2l2-1",
+      "type": "mcq",
+      "prompt": "Port 2 sends a frame to a MAC that is already learned on port 2. What happens?",
+      "options": [
+        "Send it to the CPU for routing",
+        "Forward out port 2",
+        "Flood to all ports",
+        "Filter (drop) the frame"
+      ],
+      "answer": 3,
+      "explanation": "When the destination MAC is on the same port the frame arrived on, there is no reason to send it anywhere, so the switch filters it.",
+      "why_wrong": {
+        "1": "Sending it back out the ingress port is not how a switch forwards.",
+        "2": "Flooding only happens when the destination is unknown or broadcast/multicast.",
+        "0": "Switching decisions happen in hardware, not on the CPU."
+      },
+      "concepts": [
+        "filtering",
+        "MAC learning"
+      ]
+    },
+    {
+      "id": "q-m2l2-2",
+      "type": "self",
+      "prompt": "Walk through all five steps of switch processing for: 'Host X on port 5 sends its very first frame to Host Y on port 9, and the switch has never seen either host.'",
+      "checklist": [
+        {
+          "text": "The switch reads the source MAC and learns X is behind port 5.",
+          "weight": 2
+        },
+        {
+          "text": "It looks up Y in the MAC table and finds no entry.",
+          "weight": 1
+        },
+        {
+          "text": "Because Y is unknown, it floods the frame within the VLAN except out port 5.",
+          "weight": 2
+        },
+        {
+          "text": "When Y replies, the switch learns Y is behind port 9.",
+          "weight": 1
+        },
+        {
+          "text": "Subsequent frames from X to Y are forwarded only to port 9 (no more flooding).",
+          "weight": 2
+        }
+      ],
+      "reference": "<p>Learning is driven by source addresses, so the first frame teaches the switch where X is. The destination lookup for Y fails, so the frame is flooded inside the VLAN (not out the ingress port). Y's reply teaches the switch Y's port, after which the conversation is unicast. This 'learn from the reply' pattern is why unknown unicast flooding is self-limiting on a healthy network but permanent for receive-only devices.</p>",
+      "min_to_pass": 0.75,
+      "concepts": [
+        "MAC learning",
+        "flooding"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "ARP",
+      "text": "The ARP request in flight is the broadcast that creates the reply that teaches the switch where the gateway is."
+    },
+    {
+      "title": "Routing",
+      "text": "Once the frame reaches the router's MAC, the router's IP forwarding takes over — the switch never sees the IP header."
+    },
+    {
+      "title": "STP",
+      "text": "Flooding plus a loop equals a broadcast storm. STP exists to remove the loop before flooding can amplify."
+    }
+  ],
+  "interview": [
+    {
+      "q": "Explain how a switch learns MAC addresses.",
+      "a": "Passively, from the source MAC of every frame. The switch records MAC -> ingress port, refreshes the aging timer each time it is seen, moves the entry if the MAC appears on a different port, and ages entries out after about 300 seconds of silence."
+    },
+    {
+      "q": "What happens to a frame with an unknown destination MAC?",
+      "a": "It is flooded to all ports in the same VLAN except the ingress port. If the destination replies, the switch learns its location and future frames are unicast. Unknown unicast flooding is normal and is why receive-only devices keep flooding."
+    }
+  ]
+}

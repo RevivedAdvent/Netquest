@@ -1,0 +1,129 @@
+{
+  "id": "m4l5",
+  "module_id": "m4",
+  "title": "Timeouts, refusals, resets and the diagnostic framework",
+  "minutes": 20,
+  "summary": "Every failure has a signature. Learn the signatures, then use the framework rather than a fixed checklist — because real incidents do not cooperate with a linear order.",
+  "sections": [
+    {
+      "heading": "The six failure signatures",
+      "html": "<table><tr><th>Error you see</th><th>What happened</th><th>What it rules out</th></tr><tr><td>Name or service not known</td><td>Resolution failed before any packet was sent</td><td>Everything about transport, routing and the server</td></tr><tr><td>Network unreachable</td><td>No route for the destination, from the local kernel</td><td>Firewall and server</td></tr><tr><td>No route to host</td><td>ICMP destination-unreachable from a router, or ARP failed locally</td><td>Nothing upstream of that router</td></tr><tr><td>Connection refused</td><td>TCP RST received</td><td>Reachability — the host is up</td></tr><tr><td>Connection timed out</td><td>No response to SYN</td><td>The server has no listener? No — that gives RST. Timeout means drop</td></tr><tr><td>Connection reset by peer</td><td>RST mid-session (firewall state, app crash, idle timeout)</td><td>Nothing about the initial connectivity</td></tr></table><p>Memorise the mapping from error text to layer. In an interview this is the fastest way to demonstrate that you diagnose rather than guess.</p>"
+    },
+    {
+      "heading": "What each layer's failure actually looks like",
+      "html": "<div class='dots'><div class='dot-card'><b>Interface</b>No carrier, no address, or an address from 169.254. <code>ip link</code>, <code>ip addr</code>.</div><div class='dot-card'><b>IP / mask</b>Local works, remote does not, or ARP failures for addresses that should be remote. <code>ip route</code>, <code>ip neigh</code>.</div><div class='dot-card'><b>ARP / NDP</b>Neighbour FAILED, traffic silently dropped. <code>ip neigh</code>, <code>arping</code>.</div><div class='dot-card'><b>Routing</b><code>ip route get</code> reveals the wrong next hop; traceroute stops early.</div><div class='dot-card'><b>DNS</b>IP literal works, name fails. <code>dig</code>, <code>getent hosts</code>.</div><div class='dot-card'><b>Firewall</b>Timeout, not refusal, and only for some ports or sources.</div><div class='dot-card'><b>Transport</b>Refused, reset, or half-open sockets in ss.</div><div class='dot-card'><b>Application</b>TCP connects but the protocol misbehaves; 500s, TLS errors, wrong content.</div></div>"
+    },
+    {
+      "heading": "The framework, with the flexibility clause",
+      "html": "<ol class='steps'><li><b>Understand the reported symptom</b> precisely. 'The site is down' is not a symptom; 'Chrome shows ERR_CONNECTION_TIMED_OUT to wiki for three users since 09:10' is.</li><li><b>Identify scope</b>: one user or all, one site or all, since when, after what change.</li><li><b>Interface and link status.</b></li><li><b>IP configuration.</b></li><li><b>Local network and gateway.</b></li><li><b>Routing.</b></li><li><b>DNS.</b></li><li><b>Transport-layer connectivity.</b></li><li><b>Service listening and logs.</b></li><li><b>Form a hypothesis, then verify it</b> with evidence that could have falsified it.</li></ol><p>The clause: this is a guide, not a law. If the complaint is 'the site loads but says 502', you do not start at the interface — the evidence already tells you transport and DNS work. Good troubleshooters jump to the layer implicated by the error text and only walk forward when they must. What makes the order valuable is that it guarantees you check the cheap things before the expensive ones.</p>"
+    },
+    {
+      "heading": "Diagnosing the same incident three ways",
+      "html": "<p><strong>Scenario A — 'It is slow.'</strong> Loss and jitter (ping, MTR) first; then congestion signals (interface errors, <code>ip -s link</code>, retransmits from <code>ss -ti</code>), then application latency. Note: latency problems are rarely DNS unless the first lookup is slow and cached ones are fast — measurable with <code>dig</code>'s timing line.</p><p><strong>Scenario B — 'It works from my desk, not from theirs.'</strong> Scope and path difference: different VLAN, different resolver, different route. Compare <code>ip route get</code>, resolver config and DNS answers between the two clients.</p><p><strong>Scenario C — 'It worked yesterday.'</strong> Change analysis beats guessing: recent configuration, certificate expiry, lease expiry, DNS TTL change, routing change, a service restart. Ask what changed before touching anything.</p>"
+    },
+    {
+      "heading": "What to say in an interview",
+      "html": "<p>A strong answer sounds like: <em>'First I would scope it and look at the exact error. If it is a name error, I test resolution separately from reachability. If resolution works, I test the port to the resolved IP and read whether it refuses or times out, which tells me whether something is listening or whether a filter is dropping. Then I check the listener and logs on the server. I would also check what changed, because a sudden failure with no previous symptoms is usually a change, not a degradation.'</em></p><p>That answer contains evidence, a hypothesis, and a decision point. It is worth more than a memorised ten-step checklist delivered without reasoning.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m4l5-1",
+      "type": "mcq",
+      "prompt": "curl hangs for 30 seconds then reports a timeout, but a packet capture shows the SYN leaving the client. Which cause fits best?",
+      "options": [
+        "DNS is misconfigured",
+        "A firewall or ACL is dropping the SYN, or the server is down",
+        "The certificate is invalid",
+        "No listener on the destination port"
+      ],
+      "answer": 1,
+      "explanation": "No listener produces a RST (refused). Silence after a SYN means the packet or its reply is dropped — a filter, or a host that is not responding.",
+      "why_wrong": {
+        "3": "That yields an immediate refusal.",
+        "0": "The capture proves the address was known and the SYN was sent.",
+        "2": "TLS happens after a TCP handshake, which never completed."
+      },
+      "concepts": [
+        "timeout vs refusal"
+      ]
+    },
+    {
+      "id": "q-m4l5-2",
+      "type": "mcq",
+      "prompt": "Which is the strongest evidence that DNS is working but the application is not?",
+      "options": [
+        "MTR shows loss at an intermediate hop",
+        "The name resolves to an IP, connections to the port are refused, and ss shows no listener",
+        "traceroute shows stars",
+        "ping fails"
+      ],
+      "answer": 1,
+      "explanation": "Resolution succeeded, transport reached the host, and the absence of a listener localises the fault to the service.",
+      "why_wrong": {
+        "3": "Ping failure proves nothing about DNS.",
+        "2": "Starred hops usually indicate ICMP filtering.",
+        "0": "Intermediate loss is often rate limiting; it says nothing about DNS."
+      },
+      "concepts": [
+        "evidence hierarchy"
+      ]
+    },
+    {
+      "id": "q-m4l5-3",
+      "type": "self",
+      "prompt": "Given only the error text, state the layer and the first command for each of: 'could not resolve host', 'connection refused', 'connection timed out', 'connection reset by peer'.",
+      "checklist": [
+        {
+          "text": "Could not resolve host: name resolution; test with dig/getent and check nsswitch/hosts/resolv.conf.",
+          "weight": 2
+        },
+        {
+          "text": "Connection refused: transport/listener; test with ss -ltnp on the server and check the bound address.",
+          "weight": 2
+        },
+        {
+          "text": "Connection timed out: filtering or unreachable host; check capture, firewall, routing.",
+          "weight": 2
+        },
+        {
+          "text": "Connection reset by peer: mid-session termination; check firewall state, idle timeouts, application logs.",
+          "weight": 2
+        },
+        {
+          "text": "States clearly that each error text already excludes some layers, which is why the error is the first clue.",
+          "weight": 1
+        }
+      ],
+      "reference": "<p>Resolution error -> DNS/NSS layer, before any packet: <code>dig</code>, <code>getent hosts</code>, resolv.conf, hosts file. Refused -> RST from a reachable host: <code>ss -ltnp</code> and the bind address. Timed out -> packets dropped: <code>tcpdump</code>, firewall rules, routing. Reset -> an established connection was torn down: firewall state table, idle timeouts, application or proxy behaviour, and server logs. Reading the error text correctly eliminates whole layers at once.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "failure signatures"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "DNS module",
+      "text": "Resolution failures have their own distinct signature; never conflate them with connectivity failures."
+    },
+    {
+      "title": "Process module",
+      "text": "Once transport reaches the host, ss and systemctl/journalctl own the investigation."
+    },
+    {
+      "title": "All case studies",
+      "text": "Every mission in this application is graded on whether you identified the layer, not just the answer."
+    }
+  ],
+  "interview": [
+    {
+      "q": "What is the difference between connection refused and connection timed out?",
+      "a": "Refused means a TCP RST arrived: the host is reachable but nothing is listening (or a REJECT rule fired). Timed out means no reply at all: a DROP rule, a dead host, or a black-holed route. The distinction decides whether you look at the listener or at the path."
+    },
+    {
+      "q": "How do you troubleshoot an intermittent problem?",
+      "a": "Make it measurable: capture or monitor over time, quantify frequency and conditions (time of day, load, source), and correlate with changes. Intermittency usually means multiple paths or servers, resource contention, expiring timers (leases, certificates, TTLs), or packet loss, so instrumenting beats guessing."
+    }
+  ]
+}

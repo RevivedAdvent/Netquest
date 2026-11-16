@@ -1,0 +1,94 @@
+{
+  "id": "m5l2",
+  "module_id": "m5",
+  "title": "Static routes, default routes and next hops",
+  "minutes": 18,
+  "summary": "Static routing looks simple and fails in subtle ways: unreachable next hops, recursive lookups, and routes that silently shadow others.",
+  "sections": [
+    {
+      "heading": "Adding and reading static routes",
+      "html": "<pre><span class='c'># route to a subnet via a next hop (not persistent)</span>sudo ip route add 10.99.0.0/16 via 10.20.30.1 dev eth0\n<span class='c'># route out an interface with no next hop (point-to-point or on-link)</span>sudo ip route add 10.99.0.0/16 dev eth0\n<span class='c'># replace the default route</span>sudo ip route replace default via 10.20.30.1\n<span class='c'># blackhole: silently discard (useful to stop a route leaking)</span>sudo ip route add 10.66.0.0/16 blackhole\n<span class='c'># inspect just this prefix</span>ip route show 10.99.0.0/16\n<span class='c'># what would the kernel do?</span>ip route get 10.99.5.5</pre><p>Routes added with <code>ip</code> vanish on reboot. Persistent configuration on Fedora goes in NetworkManager (a route in the connection profile: <code>nmcli con modify eth0 +ipv4.routes \"10.99.0.0/16 10.20.30.1\"</code>) or in <code>/etc/NetworkManager/dispatcher.d/</code> for scripts. Editing <code>/etc/sysconfig/network-scripts/</code> is the legacy path and no longer the default.</p>"
+    },
+    {
+      "heading": "The four static-route failure modes",
+      "html": "<ol class='steps'><li><b>Next hop is not on-link.</b> <code>ip route add 10.99.0.0/16 via 10.55.0.1</code> when 10.55.0.0/24 is not locally connected: the kernel rejects it ('Nexthop has invalid gateway') because it cannot ARP for the gateway. If something forces it in, the packet is dropped.</li><li><b>Unreachable next hop at runtime.</b> The gateway address is valid but the device is down. The route exists, the packet is dropped, and <code>ip neigh</code> shows FAILED for the next hop. This is the classic 'route exists but nothing works'.</li><li><b>Shadowing.</b> A more specific or more convincing route wins. A default route plus a stale /24 for the same space means traffic takes the wrong path with no error message.</li><li><b>Recursive lookup and flaps.</b> A route whose next hop is itself reached via a route that depends on connectivity: when the underlying path fails, the static route stays in the table (Linux does not track it) and black-holes traffic.</li></ol>"
+    },
+    {
+      "heading": "Default routes and why more than one can be good",
+      "html": "<p>Two defaults with different metrics is a legitimate poor-man's failover:</p><pre>default via 192.168.1.1 dev eth0 metric 100\ndefault via 192.168.2.1 dev wlan0 metric 600</pre><p>If eth0 loses carrier, its route is withdrawn and the wireless default takes over. This is exactly what NetworkManager does on a laptop, and it is why 'which default route is in use' can change mid-session.</p><p>More sophisticated selection uses policy routing: multiple tables plus <code>ip rule</code>, so that traffic from one source or to one destination uses a different table. This is how VPNs implement split tunnelling (only VPN-space prefixes go through <code>tun0</code>).</p>"
+    },
+    {
+      "heading": "Source address selection",
+      "html": "<p>A forgotten part of routing: when a host has several addresses, which source IP does it use? Linux prefers the address of the egress interface that is in the same subnet as the destination, otherwise the primary address of that interface. This matters because firewalls and services often filter by source address. <code>ip route get</code> prints the chosen <code>src</code>, which is the fastest way to explain 'the server rejects me because my VPN address is the source'.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m5l2-1",
+      "type": "mcq",
+      "prompt": "You add `ip route add 10.99.0.0/16 via 10.55.0.1` and the kernel returns 'Nexthop has invalid gateway'. Why?",
+      "options": [
+        "A route to 10.99.0.0/16 already exists",
+        "The prefix length is invalid",
+        "10.55.0.1 is not reachable on any directly connected network",
+        "You need sudo"
+      ],
+      "answer": 2,
+      "explanation": "A gateway must be reachable on-link, because the kernel must ARP for it. If no connected route covers 10.55.0.1, the route is invalid.",
+      "why_wrong": {
+        "3": "That produces a permission error, not a nexthop error.",
+        "1": "/16 is perfectly valid.",
+        "0": "A duplicate yields 'File exists'."
+      },
+      "concepts": [
+        "next hop reachability"
+      ]
+    },
+    {
+      "id": "q-m5l2-2",
+      "type": "mcq",
+      "prompt": "A route to 10.99.0.0/16 exists via 10.20.30.1, but traffic to 10.99.5.5 is dropped. `ip neigh` shows 10.20.30.1 FAILED. What is wrong?",
+      "options": [
+        "DNS is misconfigured",
+        "The route is wrong",
+        "The next hop cannot be resolved at Layer 2, so the route is unusable",
+        "The metric is too high"
+      ],
+      "answer": 2,
+      "explanation": "The route is present but the gateway is not answering ARP. Routing cannot work without Layer 2 resolution of the next hop.",
+      "why_wrong": {
+        "1": "The route is correct; the gateway is unreachable.",
+        "0": "DNS is irrelevant to an IP-level forward.",
+        "3": "Metric only affects selection among competing routes."
+      },
+      "concepts": [
+        "ARP dependency",
+        "unreachable next hop"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "ARP",
+      "text": "Every static route with a next hop depends on ARP resolution of that next hop."
+    },
+    {
+      "title": "Policy routing",
+      "text": "Multiple tables plus ip rule is how VPN split tunnelling actually works."
+    },
+    {
+      "title": "Case study 5 and 8",
+      "text": "Gateway failure and routing misconfiguration are both static-route failure modes."
+    }
+  ],
+  "interview": [
+    {
+      "q": "What is the difference between a default route and a static route?",
+      "a": "A default route is a static route for 0.0.0.0/0 that matches everything not matched by a more specific entry. A static route is any manually configured prefix; a default route is just the least specific possible instance of one."
+    },
+    {
+      "q": "Why does a static route need an on-link next hop?",
+      "a": "Because the kernel must resolve the next hop's link-layer address to send the frame. It can only do that for addresses it believes are directly attached, i.e. covered by a connected route."
+    }
+  ]
+}

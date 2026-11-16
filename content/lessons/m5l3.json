@@ -1,0 +1,131 @@
+{
+  "id": "m5l3",
+  "module_id": "m5",
+  "title": "Dynamic routing: RIP, OSPF and BGP",
+  "minutes": 24,
+  "summary": "Three protocols, three philosophies. Understand distance-vector, link-state and path-vector, then focus on OSPF fundamentals while knowing what RIP and BGP are for.",
+  "sections": [
+    {
+      "heading": "Why dynamic routing exists",
+      "html": "<p>Static routes do not react. In a network with redundant paths, a failed link must be noticed and the table updated automatically, typically in under a second. That is what a routing protocol does: it exchanges reachability information, computes best paths, and reconverges after change.</p><p>The three families differ in <em>what</em> they exchange:</p><table><tr><th>Family</th><th>Exchanges</th><th>Computes</th><th>Examples</th></tr><tr><td>Distance-vector</td><td>Distance to each destination (hop count)</td><td>Bellman-Ford: trust your neighbour's claim plus one hop</td><td>RIP, EIGRP (hybrid)</td></tr><tr><td>Link-state</td><td>Own links and costs, flooded to everyone</td><td>Dijkstra SPF over a complete topology map</td><td>OSPF, IS-IS</td></tr><tr><td>Path-vector</td><td>Full AS path to each prefix</td><td>Policy choice based on path attributes</td><td>BGP</td></tr></table><p>The consequence: distance-vector routers know only what their neighbours tell them ('the network is 3 hops that way'), so they can be misled — the basis of count-to-infinity loops. Link-state routers build an identical map of the whole area, so their decisions are consistent and convergence is faster, at the cost of memory and flooding.</p>"
+    },
+    {
+      "heading": "RIP: the teaching protocol",
+      "html": "<p>RIP (Routing Information Protocol) is the simplest distance-vector protocol: maximum hop count 15, updates every 30 seconds, full table exchange with neighbours. Hop count ignores bandwidth — a 1 Gbps path and a 64 kbps path two hops shorter are treated as better.</p><p>It survives in exams and small labs, and in jobs mainly as a historical reference and a source of interview questions. Anti-loop mechanisms to know: <strong>split horizon</strong> (do not advertise a route back out the interface you learned it from), <strong>poison reverse</strong> (advertise it as unreachable instead), and <strong>triggered updates</strong> (send immediately on change).</p><p>RIPv2 added classless prefixes (CIDR) and authentication. RIPv1 was classful, which is why it appears in older material.</p>"
+    },
+    {
+      "heading": "OSPF: the enterprise interior protocol",
+      "html": "<p>OSPF (Open Shortest Path First) is link-state. Core concepts:</p><table><tr><th>Concept</th><th>Meaning</th></tr><tr><td>Area</td><td>Group of routers sharing a topology database; area 0 is the backbone. All areas connect to 0.</td></tr><tr><td>LSA</td><td>Link state advertisement — the units of topology information flooded within an area.</td></tr><tr><td>LSDB</td><td>Link state database: every router in an area has the same one.</td></tr><tr><td>Cost</td><td>Interface metric, by default reference bandwidth / interface bandwidth.</td></tr><tr><td>Neighbour</td><td>Adjacent router, formed via Hello packets.</td></tr><tr><td>DR/BDR</td><td>Designated router on a broadcast segment, to limit adjacencies.</td></tr></table><p>OSPF discovers neighbours with Hello packets on 224.0.0.5 (protocol 89, not TCP/UDP). Routers flood LSAs so every router has the same LSDB, then each runs Dijkstra to compute shortest paths to every prefix — nodes and links, not just hop counts.</p><p>Why it is the enterprise standard: fast convergence, no hop limit, supports VLSM and summarisation, and areas bound the flooding domain. In an interview, being able to say <em>why</em> one is better than RIP (fast, has loop-free topology computation, can weigh bandwidth) matters more than CLI details.</p>"
+    },
+    {
+      "heading": "BGP: the internet's routing protocol",
+      "html": "<p>BGP (Border Gateway Protocol) is path-vector and runs between autonomous systems: an AS is a network under one administrative control with a single routing policy (an ISP, a cloud provider, a large enterprise). BGP exchanges routes over <strong>TCP port 179</strong> — the only one of these three that uses TCP.</p><p>Key terminology: <strong>AS path</strong> (the list of ASes a prefix traverses), <strong>eBGP vs iBGP</strong> (between ASes vs inside one), <strong>next hop</strong>, <strong>local pref</strong>, <strong>MED</strong>, and <strong>prefix filter</strong>.</p><p>BGP does not compute a shortest path in the OSPF sense. It selects by a long list of policy attributes where the AS path length is only one factor, and where <em>policy</em> — which peers you prefer, which prefixes you accept — dominates. That is the crucial difference: BGP is how the internet implements business relationships.</p><p>Consequences worth knowing: a BGP misconfiguration can black-hole a country's traffic (a leaked more-specific route wins by longest prefix match); route hijacking is possible without RPKI; and convergence is slow, measured in seconds to minutes, which is why a BGP flap is a serious event.</p>"
+    },
+    {
+      "heading": "Choosing in practice",
+      "html": "<table><tr><th>Environment</th><th>Typical choice</th><th>Why</th></tr><tr><td>Linux host with two uplinks</td><td>Static routes, or BGP from the host in serious deployments</td><td>Simple, no protocol overhead; BGP when the upstream requires it</td></tr><tr><td>Small office LAN</td><td>Static or OSPF</td><td>Little redundancy, few routers</td></tr><tr><td>Enterprise campus/data centre</td><td>OSPF or IS-IS</td><td>Fast convergence, scalability with areas</td></tr><tr><td>Between organisations / ISP</td><td>BGP</td><td>Policy, AS-level control, scale</td></tr></table><p>On Linux you can run <code>frr</code> (FRRouting) for OSPF and BGP, or keep hosts on static routes and let the routers handle dynamic protocols. The <code>bird</code> daemon is a lighter option. Neither is required for this application's exercises.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m5l3-1",
+      "type": "mcq",
+      "prompt": "Which protocol is link-state and computes shortest paths with Dijkstra?",
+      "options": [
+        "OSPF",
+        "ARP",
+        "BGP",
+        "RIP"
+      ],
+      "answer": 0,
+      "explanation": "OSPF floods link state and each router runs SPF over an identical topology database. RIP is distance-vector and BGP is path-vector.",
+      "why_wrong": {
+        "3": "RIP uses hop count and Bellman-Ford.",
+        "2": "BGP selects by policy attributes across ASes.",
+        "1": "ARP is a link-layer address resolution protocol, not a routing protocol."
+      },
+      "concepts": [
+        "OSPF",
+        "link-state"
+      ]
+    },
+    {
+      "id": "q-m5l3-2",
+      "type": "mcq",
+      "prompt": "Which protocol runs over TCP port 179?",
+      "options": [
+        "ICMP",
+        "OSPF",
+        "RIP",
+        "BGP"
+      ],
+      "answer": 3,
+      "explanation": "BGP peers over TCP 179. OSPF runs directly over IP (protocol 89) with its own multicasts; RIP uses UDP 520.",
+      "why_wrong": {
+        "2": "RIP uses UDP 520.",
+        "1": "OSPF is protocol 89, not TCP.",
+        "0": "ICMP has no ports."
+      },
+      "concepts": [
+        "BGP",
+        "ports"
+      ]
+    },
+    {
+      "id": "q-m5l3-3",
+      "type": "self",
+      "prompt": "Compare distance-vector, link-state and path-vector routing, and say where each is appropriate.",
+      "checklist": [
+        {
+          "text": "Distance-vector exchanges distance to destinations and trusts neighbours (RIP: hop count, max 15).",
+          "weight": 2
+        },
+        {
+          "text": "Link-state floods link information so every router has the same topology and runs SPF (OSPF, IS-IS).",
+          "weight": 2
+        },
+        {
+          "text": "Path-vector exchanges AS paths and applies policy (BGP), used between autonomous systems.",
+          "weight": 2
+        },
+        {
+          "text": "Mentions that hop count ignores bandwidth and that link-state converges faster with more resources.",
+          "weight": 1
+        },
+        {
+          "text": "Concludes with where each is used: RIP/labs, OSPF enterprise, BGP between ISPs.",
+          "weight": 2
+        }
+      ],
+      "reference": "<p>Distance-vector protocols such as RIP share 'network X is N hops away' and apply Bellman-Ford, so they converge slowly, suffer count-to-infinity without split horizon, and cannot weigh bandwidth. Link-state protocols such as OSPF flood link information, so each router builds an identical map and computes shortest paths with Dijkstra — faster convergence and loop-free topology decisions at the cost of memory and flooding. Path-vector protocols such as BGP exchange complete AS paths between autonomous systems and choose by policy, which is how the internet expresses commercial and operational relationships. In practice: RIP is educational, OSPF/IS-IS inside an organisation, BGP between organisations.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "routing protocol families"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Longest prefix match",
+      "text": "Every protocol's output feeds the same table, and the same longest-prefix rule decides; that is how a leaked more-specific can hijack traffic."
+    },
+    {
+      "title": "OSPF areas and VLANs",
+      "text": "Areas bound flooding, VLANs bound broadcasts — the same containment idea at different layers."
+    },
+    {
+      "title": "Troubleshooting",
+      "text": "A routing problem shows up as 'reaches some destinations, not others' — and ip route get localises it in one command."
+    }
+  ],
+  "interview": [
+    {
+      "q": "What is the difference between OSPF and BGP?",
+      "a": "OSPF is an interior link-state protocol used inside an organisation: it floods topology data within areas and computes shortest paths by cost, converging in seconds. BGP is an exterior path-vector protocol used between autonomous systems: it exchanges AS paths over TCP 179 and selects routes by policy attributes rather than pure shortest path."
+    },
+    {
+      "q": "Why is BGP considered fragile?",
+      "a": "Because it is policy-driven with global blast radius: a misconfigured or leaked announcement can attract traffic by longest-prefix match, there is no built-in authentication (RPKI helps), and convergence is slow. A single bad export can black-hole a large address range."
+    }
+  ]
+}

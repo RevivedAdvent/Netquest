@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Simulations — NetQuest{% endblock %}
+{% block crumb %}Practise / Simulations{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap-wide">
+  <div class="eyebrow">{{ simulations | length }} deterministic simulators &middot; no real traffic</div>
+  <h1 class="mt0">Simulations</h1>
+  <p class="lead" style="max-width:800px">Each simulator is a model with an explicit, documented set of simplifications. Change one thing and watch what the protocol or device does — then inject a fault and diagnose it from the evidence.</p>
+
+  <div class="grid grid-2">
+    {% for s in simulations %}
+    {% set st = states.get(s.id, {}) %}
+    <div class="card">
+      <div class="split">
+        <div class="eyebrow">module {{ s.module_id }} &middot; {{ s.kind }} &middot; {{ s.minutes }} min</div>
+        {% if st.get('completed') %}<span class="badge ok">{{ st.get('score') }}%</span>{% endif %}
+      </div>
+      <h2 class="mt0" style="font-size:19px"><a href="/simulations/{{ s.id }}">{{ s.title }}</a></h2>
+      <p class="small">{{ s.summary | truncate(200) }}</p>
+      <div class="mt16">
+        <div class="small muted mb8">What you will learn</div>
+        <ul class="small mb0">
+          {% for l in s.learn %}<li>{{ l }}</li>{% endfor %}
+        </ul>
+      </div>
+      <div class="btn-row mt16">
+        <a class="btn small primary" href="/simulations/{{ s.id }}">Open simulator</a>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card tight">
+    <div class="card-title"><h3 class="mt0">Every simulator is honest about what it leaves out</h3></div>
+    <p class="small mb0">The simplifications are listed on each page. A model that hides its assumptions teaches the wrong instinct, so if a behaviour looks too clean, read that list before drawing a conclusion about a real network.</p>
+  </div>
+</div>
+{% endblock %}

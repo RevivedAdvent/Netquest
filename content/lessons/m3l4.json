@@ -1,0 +1,152 @@
+{
+  "id": "m3l4",
+  "module_id": "m3",
+  "title": "The complete Linux name-resolution journey",
+  "minutes": 28,
+  "summary": "Typing a URL triggers far more than a DNS query. This lesson follows the exact path on Fedora: NSS, nsswitch.conf, /etc/hosts, resolv.conf, systemd-resolved, the recursive resolver, then TCP/TLS/HTTP.",
+  "sections": [
+    {
+      "heading": "Step 0: the application's own cache",
+      "html": "<p>The browser checks its internal DNS cache first. Many browsers also run their own resolver path: Chrome/Firefox may use DNS-over-HTTPS, in which case the query does <em>not</em> go through <code>/etc/resolv.conf</code> at all. This is why 'browsers cannot resolve but <code>dig</code> works' is a real, diagnosable situation: check <code>about:networking#dns</code> (Firefox) or <code>chrome://net-internals/#dns</code>, and check whether DoH is enabled.</p><p>Keep this distinction in mind for the whole lesson: <strong>the application decides which resolver path to use; the OS only provides one default path.</strong></p>"
+    },
+    {
+      "heading": "Step 1: NSS — the OS-level switchboard",
+      "html": "<p>On Linux, name resolution for ordinary programs goes through the GNU C Library's <code>getaddrinfo()</code> (and <code>gethostbyname</code>), which is implemented using <strong>NSS</strong> (Name Service Switch). NSS decides which <em>sources</em> to consult and in what order:</p><pre><span class='c'>$ cat /etc/nsswitch.conf | grep -E '^hosts'</span>hosts:      files mdns4_minimal [NOTFOUND=return] dns myhostname</pre><p>Read that line left to right:</p><ul><li><code>files</code> — <code>/etc/hosts</code>.</li><li><code>mdns4_minimal</code> — mDNS for <code>.local</code> names only (Avahi).</li><li><code>[NOTFOUND=return]</code> — if mDNS says the name does not exist, stop rather than continuing to DNS.</li><li><code>dns</code> — the DNS resolver module, which reads <code>/etc/resolv.conf</code>.</li><li><code>myhostname</code> — resolves the local hostname.</li></ul><p>Practical consequences: an entry in <code>/etc/hosts</code> wins over DNS by default, and a missing <code>dns</code> in that line breaks DNS for everything that uses NSS while leaving <code>dig</code> working — a classic 'the tool works, the app does not' trap.</p>"
+    },
+    {
+      "heading": "Step 2: /etc/hosts",
+      "html": "<p>A tiny static table, checked before DNS. Correct uses: loopback entries, a few internal hosts on a lab machine, and temporary overrides during an incident. Wrong uses: maintaining real infrastructure (nobody knows it exists, it cannot be delegated, and every host needs its own copy).</p><pre>127.0.0.1   localhost localhost.localdomain\n::1         localhost localhost.localdomain\n10.20.30.5  wiki.internal wiki</pre><p>Because NSS consults it first, a stale hosts entry can make you chase a non-existent DNS problem for an hour. Always check it before blaming a resolver.</p>"
+    },
+    {
+      "heading": "Step 3: which resolver is configured?",
+      "html": "<p>The <code>dns</code> NSS module reads <code>/etc/resolv.conf</code>:</p><pre><span class='c'>$ cat /etc/resolv.conf</span>nameserver 127.0.0.53\noptions edns0 trust-ad\nsearch corp.example.com</pre><p>Three things to read from it:</p><ul><li><strong>nameserver</strong> — up to three; the resolver tries them in order with a timeout.</li><li><strong>search</strong> — suffix list appended to unqualified names. <code>ping wiki</code> becomes <code>wiki.corp.example.com</code>. Multiple suffixes mean multiple queries, each able to fail differently.</li><li><strong>options</strong> — <code>ndots</code>, <code>timeout</code>, <code>attempts</code>, <code>rotate</code>, and DNSSEC-related flags.</li></ul><p>On a NetworkManager/desktop Fedora system, <code>/etc/resolv.conf</code> is often a symlink to a file NetworkManager generates, or to <code>systemd-resolved</code>'s file. Both cases mean <strong>do not edit it by hand</strong> — the change will be overwritten. Change the connection's DNS settings instead.</p>"
+    },
+    {
+      "heading": "Step 4: systemd-resolved and the stub at 127.0.0.53",
+      "html": "<p><code>127.0.0.53</code> is not a public server: it is a local stub listener owned by <code>systemd-resolved</code>. Identification first, always:</p><pre><span class='c'># is resolved actually running and is it the stub in use?</span>systemctl is-active systemd-resolved\nresolvectl status\n<span class='c'># who owns port 53 locally?</span>ss -lunp 'sport = :53'</pre><p>If <code>resolvectl status</code> works and lists per-link DNS servers, resolved is in control. If it prints 'Failed to get global data: Unit dbus-org.freedesktop.resolve1.service not found', resolved is not in use and the nameservers in <code>/etc/resolv.conf</code> are being used directly by glibc.</p><p>Why this matters: with resolved, the per-link configuration can be split (VPN DNS for a VPN's domains, split-horizon views), and queries are cached twice — once in resolved, once in the upstream resolver. A DNSSEC validation failure inside resolved produces SERVFAIL that the upstream server never returned, which confuses people who only look at upstream logs.</p><div class='note'><b>Do not assume systemd-resolved is active.</b> Fedora installations vary, and container/host images frequently use a plain <code>resolv.conf</code>. Verify before using <code>resolvectl</code>, and treat <code>dig</code> against a specific server as the ground truth for 'is the server answering?'.</div>"
+    },
+    {
+      "heading": "Steps 5-8: the resolver answers",
+      "html": "<p>The query now reaches a recursive resolver (either the local stub, which forwards, or the configured nameserver directly):</p><ol class='steps'><li><b>Cache lookup.</b> If a valid cached answer exists (positive or negative) it is returned immediately, with the remaining TTL.</li><li><b>Iteration.</b> Otherwise: root -> TLD -> authoritative, following referrals.</li><li><b>Authoritative answer.</b> The authoritative server responds with the records, or NXDOMAIN if the name does not exist in the zone, or NOERROR/NODATA if the name exists but not with that type.</li><li><b>Caching.</b> The resolver stores the answer for its TTL (and a negative answer for the SOA's minimum).</li></ol><p>Then the resolver returns the packet to the client, and NSS hands the address to the application, which finally calls <code>connect()</code>.</p>"
+    },
+    {
+      "heading": "Step 9: resolution is not a connection",
+      "html": "<p>This is the point most candidates blur. After DNS returns an address, an entirely separate chain runs:</p><table><tr><th>Stage</th><th>What happens</th><th>Failure looks like</th></tr><tr><td>Routing + ARP/NDP</td><td>Pick next hop, resolve its MAC</td><td>'Network unreachable' / ARP never resolves</td></tr><tr><td>TCP handshake</td><td>SYN, SYN-ACK, ACK to port 443</td><td>Timeout (filtered) or refused (no listener)</td></tr><tr><td>TLS handshake</td><td>Certificate check, key exchange</td><td>Certificate error, handshake failure</td></tr><tr><td>HTTP</td><td>Request/response</td><td>4xx/5xx, redirect loop</td></tr></table><p>A DNS failure gives an error before any packet leaves toward the server (\"name or service not known\"). A TCP failure gives a connection error after resolution succeeded. They are trivially distinguishable if you look at the error text and the timing.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m3l4-1",
+      "type": "mcq",
+      "prompt": "Browsers and curl cannot resolve names, but dig example.com works. What is the most likely cause?",
+      "options": [
+        "NSS configuration or the resolver path used by the application differs — e.g. hosts entry, nsswitch missing dns, or the app uses DNS-over-HTTPS",
+        "The DNS record has expired",
+        "The DNS server is down",
+        "TCP port 53 is blocked"
+      ],
+      "answer": 0,
+      "explanation": "dig queries the resolver directly, bypassing NSS. If dig works and ordinary programs do not, the difference is in the application's resolution path: nsswitch, /etc/hosts, search domains or app-level DoH.",
+      "why_wrong": {
+        "2": "dig proves the server answers.",
+        "1": "Expired records return NXDOMAIN for everyone, including dig.",
+        "3": "dig would then also fail (or fall back to TCP)."
+      },
+      "concepts": [
+        "NSS",
+        "dig vs application resolution"
+      ]
+    },
+    {
+      "id": "q-m3l4-2",
+      "type": "mcq",
+      "prompt": "What does a name server of 127.0.0.53 in /etc/resolv.conf indicate?",
+      "options": [
+        "A root DNS server",
+        "A misconfiguration; 127.0.0.53 is invalid",
+        "The systemd-resolved stub resolver listening locally",
+        "Cloudflare DNS"
+      ],
+      "answer": 2,
+      "explanation": "127.0.0.53 is systemd-resolved's stub listener. It forwards to configured upstream servers and caches.",
+      "why_wrong": {
+        "0": "Root servers are public anycast addresses, not loopback.",
+        "1": "It is valid; it is the resolved stub.",
+        "3": "Cloudflare is 1.1.1.1 / 1.0.0.1."
+      },
+      "concepts": [
+        "systemd-resolved",
+        "resolv.conf"
+      ]
+    },
+    {
+      "id": "q-m3l4-3",
+      "type": "self",
+      "prompt": "Describe every step from typing a URL in a browser to the first HTTP request, naming the component responsible at each step and where caching can shortcut the path.",
+      "checklist": [
+        {
+          "text": "Browser DNS cache (and possibly browser DoH resolver) is consulted first.",
+          "weight": 1
+        },
+        {
+          "text": "OS resolution goes through NSS: /etc/nsswitch.conf decides files/hosts then dns.",
+          "weight": 2
+        },
+        {
+          "text": "/etc/hosts is consulted before DNS.",
+          "weight": 1
+        },
+        {
+          "text": "The dns NSS module reads /etc/resolv.conf; on systemd-resolved systems 127.0.0.53 is the stub.",
+          "weight": 2
+        },
+        {
+          "text": "The recursive resolver answers from cache or iterates root -> TLD -> authoritative.",
+          "weight": 2
+        },
+        {
+          "text": "Answer cached for TTL and returned; NSS returns the address to the application.",
+          "weight": 1
+        },
+        {
+          "text": "Then a separate chain: route lookup, ARP/NDP, TCP handshake on 443, TLS handshake, HTTP request.",
+          "weight": 2
+        },
+        {
+          "text": "Any cache hit skips the corresponding part of the hierarchy walk.",
+          "weight": 1
+        }
+      ],
+      "reference": "<p>Browser cache -> NSS (<code>getaddrinfo</code>) -> <code>/etc/nsswitch.conf</code> -> <code>/etc/hosts</code> -> resolv.conf nameserver (often the systemd-resolved stub at 127.0.0.53) -> recursive resolver cache -> iterative walk root/TLD/authoritative -> answer cached for the TTL -> returned through NSS to the application. Only after this does the transport chain begin: routing lookup, next-hop resolution with ARP/NDP, TCP SYN to port 443, TLS handshake, then HTTP. Caching at any level (browser, resolved, resolver) shortens or eliminates the hierarchy walk, which is why 'not every lookup resolves from the root' is the correct statement.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "full resolution journey",
+        "TCP/TLS separation"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "DHCP",
+      "text": "DHCP option 6 populates the nameserver in resolv.conf, so the two modules join here."
+    },
+    {
+      "title": "Troubleshooting",
+      "text": "getent hosts and resolvectl test the OS path; dig tests the server. Knowing which you are testing is half the diagnosis."
+    },
+    {
+      "title": "Case study 2 and 4",
+      "text": "One is a resolver problem, the other is 'DNS fine, transport broken'."
+    }
+  ],
+  "interview": [
+    {
+      "q": "What is the difference between /etc/hosts and DNS on Linux?",
+      "a": "/etc/hosts is a static local table consulted first via NSS (files before dns in nsswitch.conf). DNS is the distributed hierarchy queried through a configured resolver. hosts wins, which makes stale entries a common misdiagnosis."
+    },
+    {
+      "q": "How do you prove whether DNS or the network is at fault?",
+      "a": "Resolve the name (dig/getent), then connect to the IP directly (ping, nc, curl --resolve). If resolution succeeds and the IP connection fails, it is transport or routing. If resolution fails, check hosts, resolv.conf, resolvectl and the server itself."
+    }
+  ]
+}

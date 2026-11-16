@@ -1,0 +1,93 @@
+{
+  "id": "m5l1",
+  "module_id": "m5",
+  "title": "L2 versus L3, routing tables and longest prefix match",
+  "minutes": 22,
+  "summary": "The forwarding decision in detail: what changes at each hop, how a Linux routing table is structured, and how longest prefix match actually resolves.",
+  "sections": [
+    {
+      "heading": "What changes at each hop",
+      "html": "<table><tr><th>Field</th><th>Switch (L2)</th><th>Router (L3)</th></tr><tr><td>Source MAC</td><td>Unchanged</td><td>Rewritten to the egress interface</td></tr><tr><td>Destination MAC</td><td>Used for lookup; unchanged</td><td>Rewritten to the next hop's MAC</td></tr><tr><td>Source/destination IP</td><td>Not read</td><td>Read for the lookup; dest unchanged (except NAT)</td></tr><tr><td>TTL</td><td>Not present in a frame</td><td>Decremented; dropped at 0</td></tr><tr><td>Broadcast</td><td>Flooded within VLAN</td><td>Not forwarded</td></tr></table><p>So a packet's IP header is essentially stable end to end, while its frame header is rewritten at every hop. Anything that mangles that (asymmetric routing, NAT, tunnels) changes what you can infer from a capture.</p>"
+    },
+    {
+      "heading": "Anatomy of a Linux routing table",
+      "html": "<pre><span class='c'>$ ip route</span>default via 192.168.1.1 dev eth0 proto dhcp src 192.168.1.42 metric 100\n192.168.1.0/24 dev eth0 proto kernel scope link src 192.168.1.42 metric 100\n10.8.0.0/24 via 10.8.0.1 dev tun0 metric 50\n203.0.113.0/24 dev eth1 proto static scope link metric 20</pre><table><tr><th>Column</th><th>Meaning</th></tr><tr><td><code>default</code></td><td>0.0.0.0/0 — the catch-all</td></tr><tr><td><code>via</code></td><td>Next-hop IP; absent means the destination is on-link</td></tr><tr><td><code>dev</code></td><td>Egress interface</td></tr><tr><td><code>proto kernel</code></td><td>Installed automatically from the interface's address/mask</td></tr><tr><td><code>proto dhcp</code></td><td>Installed from a DHCP option</td></tr><tr><td><code>proto static</code></td><td>Configured by an administrator</td></tr><tr><td><code>scope link</code></td><td>Destination is on this link; no gateway needed</td></tr><tr><td><code>scope host</code></td><td>Local address (127.0.0.1/8, own addresses)</td></tr><tr><td><code>metric</code></td><td>Preference between routes to the same prefix from the same source</td></tr></table><p>Note the order of authority in Linux: longest prefix first; then route type (a more specific or hand-configured route beats a learned one); then metric. Multiple default routes with different metrics give you a crude failover: the lower metric wins, and if its interface goes down the route is withdrawn.</p>"
+    },
+    {
+      "heading": "Longest prefix match, worked",
+      "html": "<p>Table:</p><pre>0.0.0.0/0     via 192.168.1.1     metric 100\n10.0.0.0/8    via 10.8.0.1        metric 50\n10.1.0.0/16   via 10.8.0.2        metric 50\n10.1.2.0/24   dev eth1            metric 20</pre><table><tr><th>Destination</th><th>Matching prefixes</th><th>Winner</th><th>Why</th></tr><tr><td>10.1.2.55</td><td>/0, /8, /16, /24</td><td>/24 on eth1</td><td>Most specific; sent directly, no gateway</td></tr><tr><td>10.1.5.9</td><td>/0, /8, /16</td><td>/16 via 10.8.0.2</td><td>/16 beats /8 despite the same metric</td></tr><tr><td>10.9.0.1</td><td>/0, /8</td><td>/8 via 10.8.0.1</td><td>/8 beats default</td></tr><tr><td>8.8.8.8</td><td>/0</td><td>default</td><td>Nothing else matches</td></tr></table><p>The trap to remember for interviews: metric never overrides specificity. A /24 with a terrible metric still beats a /8 with a perfect one.</p><p>Verify any claim with:</p><pre>ip route get 10.1.5.9</pre>"
+    },
+    {
+      "heading": "Routing loops and convergence",
+      "html": "<p>A loop exists when two routers each believe the other is the better path to a destination. Symptoms: TTL exhaustion (visible as ICMP time-exceeded from each other), traceroute showing the same addresses repeating, and latency that increases in steps.</p><p>Loops come from stale information — a link failed but a router still advertises the old path. Link-state protocols flood new information quickly and reconverge; distance-vector protocols need mechanisms to stop counting to infinity (split horizon, poison reverse, triggered updates). Convergence is simply 'everyone has the same, current view'. Every routing incident you will ever debug is a convergence failure or a policy misconfiguration.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m5l1-1",
+      "type": "mcq",
+      "prompt": "What does `ip route get 203.0.113.9` print, and why is it useful?",
+      "options": [
+        "The full routing table",
+        "The ARP entry for the destination",
+        "Whether the destination is reachable",
+        "The route, source address and interface the kernel would use — without sending traffic"
+      ],
+      "answer": 3,
+      "explanation": "It performs the same lookup the kernel would perform for a real packet and prints the decision, including the chosen source IP.",
+      "why_wrong": {
+        "1": "That is ip neigh.",
+        "0": "That is ip route.",
+        "2": "It shows the decision, not reachability."
+      },
+      "concepts": [
+        "ip route get"
+      ]
+    },
+    {
+      "id": "q-m5l1-2",
+      "type": "mcq",
+      "prompt": "A host has default via 192.168.1.1 (metric 100) and 172.16.0.0/12 dev eth1 (metric 500). A packet to 172.16.5.5 goes where?",
+      "options": [
+        "Out eth1 directly, because /12 is more specific than /0",
+        "To both",
+        "To the default gateway, because metric 100 is better",
+        "Nowhere; the metrics conflict"
+      ],
+      "answer": 0,
+      "explanation": "Specificity is evaluated first. The connected /12 matches, so the packet goes out eth1 regardless of its worse metric.",
+      "why_wrong": {
+        "2": "Metric only compares routes to the same prefix.",
+        "1": "One route is selected per packet.",
+        "3": "There is no conflict; the order of evaluation is defined."
+      },
+      "concepts": [
+        "longest prefix match"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Switching",
+      "text": "Each routed hop re-resolves the next hop's MAC — switching and routing alternate on the same wire."
+    },
+    {
+      "title": "IP addressing",
+      "text": "Connected and local routes are generated from the interface address and mask; change the mask and the table changes."
+    },
+    {
+      "title": "Case study 8",
+      "text": "The routing misconfiguration mission is a longest-prefix-match puzzle with a real symptom."
+    }
+  ],
+  "interview": [
+    {
+      "q": "Explain longest prefix match.",
+      "a": "The router collects every table entry whose prefix contains the destination and selects the one with the longest mask. Specificity is evaluated before metric or administrative distance, so a more-specific route always wins."
+    },
+    {
+      "q": "What is the difference between a static and a dynamic route?",
+      "a": "A static route is configured by an administrator and never changes unless a human or a script changes it. A dynamic route is learned by a routing protocol that reacts to topology changes, which is what allows convergence and failover at scale."
+    }
+  ]
+}

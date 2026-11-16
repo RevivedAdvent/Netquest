@@ -1,0 +1,118 @@
+{
+  "id": "m1",
+  "number": 1,
+  "title": "IP Addressing and Subnetting",
+  "tagline": "The addressing model every other protocol depends on.",
+  "priority": "revision",
+  "weight": 1.4,
+  "estimated_minutes": 55,
+  "skip_if_mastered": true,
+  "summary": "You already know how to subnet. This module is a diagnostic and a revision pass that focuses on the parts interviews actually probe: boundaries, host ranges, the gateway decision, and why ARP exists at all.",
+  "objectives": [
+    "Read any IPv4 address/mask pair and state the network, broadcast and usable range immediately.",
+    "Explain the AND operation a host performs before it decides how to send a packet.",
+    "Explain why a host with a wrong gateway or mask breaks in a very specific way.",
+    "Describe the relationship between IP addressing, ARP and the first hop."
+  ],
+  "key_questions": [
+    "What is the difference between a network address and a broadcast address?",
+    "How does a host decide whether a destination is on-link?",
+    "What exactly happens when the mask is wrong but the IP is correct?"
+  ],
+  "lesson_ids": [
+    "m1l1",
+    "m1l2",
+    "m1l3"
+  ],
+  "lab_ids": [
+    "ip-addr",
+    "ip-route",
+    "ip-neigh"
+  ],
+  "mission_ids": [
+    "case05",
+    "case12"
+  ],
+  "assessment": [
+    {
+      "id": "q-m1a-1",
+      "type": "mcq",
+      "prompt": "A host is configured as 192.168.10.130/26. Which statement is correct?",
+      "options": [
+        "Network is 192.168.10.128, broadcast 192.168.10.191, usable .129-.190",
+        "Network is 192.168.10.96, broadcast 192.168.10.159, usable .97-.158",
+        "Network is 192.168.10.0, broadcast 192.168.10.255, usable .1-.254",
+        "Network is 192.168.10.128, broadcast 192.168.10.255, usable .129-.254"
+      ],
+      "answer": 0,
+      "explanation": "/26 leaves 6 host bits, so blocks are 64 addresses wide: .0, .64, .128, .192. 130 falls in the .128 block, so the range is .129 to .190 with .191 as broadcast.",
+      "why_wrong": {
+        "2": "That is a /24, not a /26 — the mask is doing no work in this answer.",
+        "3": "The broadcast is always the last address of the block, not of the /24.",
+        "1": "Blocks of 64 start at multiples of 64 (.0, .64, .128, .192). 96 is not one of them."
+      },
+      "concepts": [
+        "subnet boundaries",
+        "broadcast address",
+        "CIDR"
+      ]
+    },
+    {
+      "id": "q-m1a-2",
+      "type": "mcq",
+      "prompt": "A Linux host has address 10.20.30.44/24 and default gateway 10.20.30.1. It wants to reach 10.20.31.7. What does the host do?",
+      "options": [
+        "Sends the frame to the broadcast address and lets routers decide",
+        "Sends a DNS query to find the router for 10.20.31.0/24",
+        "ARP for 10.20.30.1, then send the frame to the gateway's MAC address",
+        "ARP for 10.20.31.7 directly, then send the frame to it"
+      ],
+      "answer": 2,
+      "explanation": "10.20.31.7 is not in 10.20.30.0/24, so it is off-link. The host sends the packet to its default gateway, which requires the gateway's link-layer address — obtained by ARP for 10.20.30.1. The destination IP stays 10.20.31.7.",
+      "why_wrong": {
+        "3": "ARP is only used for addresses inside your own subnet. 10.20.31.7 is outside it.",
+        "0": "Hosts never broadcast data frames for off-link destinations; they unicast to the gateway's MAC.",
+        "1": "DNS resolves names, not routes. The routing table already says 'default via 10.20.30.1'."
+      },
+      "concepts": [
+        "gateway decision",
+        "ARP scope",
+        "routing table"
+      ]
+    },
+    {
+      "id": "q-m1a-3",
+      "type": "self",
+      "prompt": "An engineer changes a server's mask from /25 to /24 to 'make it see more hosts'. The server now fails to reach some addresses it used to reach. Explain what changed.",
+      "checklist": [
+        {
+          "text": "The mask defines the on-link boundary; changing it changes which destinations the host tries to ARP for.",
+          "weight": 2
+        },
+        {
+          "text": "With a wider mask, some destinations previously sent via the gateway are now considered on-link.",
+          "weight": 2
+        },
+        {
+          "text": "Those destinations do not answer ARP on the local segment, so packets are dropped before routing.",
+          "weight": 2
+        },
+        {
+          "text": "The IP and gateway can both be correct and the host still fails — this is a mask problem, not a gateway problem.",
+          "weight": 1
+        },
+        {
+          "text": "Verification: ip route shows the 'proto kernel scope link' prefix, and ip neigh fails to resolve.",
+          "weight": 1
+        }
+      ],
+      "reference": "<p>A mask is not a cosmetic attribute: it is the rule the host uses to decide <em>how</em> to send a packet. With /25 the host considered 192.0.2.10.200 off-link and sent it to the gateway. With /24 the same destination is now inside the local prefix, so the host tries to ARP for it on the wire. Nothing answers, the neighbour entry stays <code>INCOMPLETE</code>/<code>FAILED</code>, and the packet never reaches the router. The symptom looks exactly like 'the gateway is down' but <code>ip route</code> shows the prefix and <code>ip neigh</code> shows the failed resolution.</p><p>Interviewers like this question because it separates people who memorise masks from people who understand the forwarding decision.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "subnet mask",
+        "ARP",
+        "gateway decision"
+      ]
+    }
+  ]
+}

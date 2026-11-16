@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ journey.title }} — NetQuest{% endblock %}
+{% block crumb %}Study / <a href="/connections">How It All Connects</a> / {{ journey.title }}{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap">
+  <div class="eyebrow">{% for mid in journey.module_ids %}{{ mid }}{% if not loop.last %} &middot; {% endif %}{% endfor %} &middot; {{ journey.minutes }} min</div>
+  <h1 class="mt0">{{ journey.title }}</h1>
+  <p class="lead">{{ journey.tagline }}</p>
+  <p>{{ journey.summary }}</p>
+
+  <div class="pill-row mb16">
+    {% for l in journey.layers %}<span class="badge mono">{{ l }}</span>{% endfor %}
+  </div>
+
+  <h2>The walk</h2>
+  {% for s in journey.steps %}
+  <div class="card">
+    <div class="flex" style="justify-content:space-between; align-items:baseline">
+      <h3 class="mt0">{{ loop.index }}. {{ s.title }}</h3>
+      <span class="badge mono">{{ s.layer }}</span>
+    </div>
+    <p>{{ s.detail }}</p>
+    {% if s.command %}
+    <div class="codeblock"><pre><code>{{ s.command }}</code></div>
+    {% endif %}
+    {% if s.fails_when %}
+    <div class="note mb0"><b>Breaks when:</b> {{ s.fails_when }}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <h2>Breakpoints</h2>
+  <p class="small">The symptom-to-cause table. This is the part worth memorising: it converts a complaint into a hypothesis in one step.</p>
+  <table>
+    <tr><th>Symptom</th><th>Where to look</th></tr>
+    {% for b in journey.breakpoints %}
+    <tr><td>{{ b.symptom }}</td><td class="muted">{{ b.cause }}</td></tr>
+    {% endfor %}
+  </table>
+
+  <h2>Questions to answer out loud</h2>
+  <ol>
+    {% for q in journey.key_questions %}<li>{{ q }}</li>{% endfor %}
+  </ol>
+
+  <hr>
+  <div class="btn-row">
+    <a class="btn ghost" href="/connections">All journeys</a>
+    {% for o in others[:2] %}<a class="btn" href="/connections/{{ o.id }}">{{ o.title | truncate(38) }} &rarr;</a>{% endfor %}
+  </div>
+</div>
+{% endblock %}

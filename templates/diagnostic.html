@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Diagnostic — NetQuest{% endblock %}
+{% block crumb %}Study / Diagnostic{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap">
+  <div class="eyebrow">{{ bank.questions | length }} questions &middot; {{ bank.minutes }} minutes &middot; no notes</div>
+  <h1 class="mt0">{{ bank.title }}</h1>
+  <p class="lead">{{ bank.intro }}</p>
+
+  {% if done %}
+  <div class="note">
+    <b>You have already completed the diagnostic.</b> Re-running it is fine and re-orders the plan from your current answers. Scores are not deleted.
+  </div>
+  {% endif %}
+
+  <div class="card tight">
+    <div class="card-title"><h3 class="mt0">How this is scored</h3></div>
+    <p class="small mb0">{{ bank.scoring }}</p>
+  </div>
+
+  <div id="diagnosticForm">
+    {% for q in bank.questions %}
+    <div class="check-block" data-qid="{{ q.id }}" data-module="{{ q.module_id }}" data-level="{{ q.level }}">
+      <div class="qhead">
+        <span class="small">Question {{ loop.index }} of {{ bank.questions | length }} &middot; module {{ q.module_id }} &middot; level {{ q.level }}</span>
+        {% if best.get(q.id) is not none %}<span class="badge mono">best {{ (best.get(q.id) * 100) | round | int }}%</span>{% endif %}
+      </div>
+      <div class="qtext">{{ q.prompt }}</div>
+      {% for opt in q.options %}
+      <label class="option"><input type="radio" name="{{ q.id }}" value="{{ loop.index0 }}"><span>{{ opt }}</span></label>
+      {% endfor %}
+      <div class="fb"></div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="btn-row mt16">
+    <button class="btn primary" id="diagSubmit" type="button">Finish and build my plan</button>
+    <span class="small muted">You can change answers before submitting. Nothing is graded until you press this.</span>
+  </div>
+
+  <div id="diagResults" class="mt24"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+  var QUESTIONS = {{ bank.questions | tojson }};
+  var MODULES = {};
+  {% for m in [{'id':'m1','title':'IP addressing & subnetting','priority':'core'},{'id':'m2','title':'Switching & VLANs','priority':'core'},{'id':'m3','title':'DHCP & DNS','priority':'core'},{'id':'m4','title':'Connectivity & troubleshooting','priority':'core'},{'id':'m5','title':'Routing','priority':'core'},{'id':'m6','title':'Linux permissions','priority':'secondary'},{'id':'m7','title':'Process management','priority':'secondary'}] %}
+  MODULES["{{ m.id }}"] = { title: "{{ m.title }}", priority: "{{ m.priority }}" };
+  {% endfor %}
+
+  var btn = document.getElementById("diagSubmit");
+  btn.addEventListener("click", function () {
+    var answers = {};
+    QUESTIONS.forEach(function (q) {
+      var nodes = document.getElementsByName(q.id);
+      answers[q.id] = -1;
+      nodes.forEach(function (n) { if (n.checked) answers[q.id] = +n.value; });
+    });
+    var unanswered = Object.keys(answers).filter(function (k) { return answers[k] === -1; }).length;
+    if (unanswered > 3) {
+      NetQuest.toast(unanswered + " unanswered — answer at least most of them for a useful plan");
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Scoring…";
+
+    var perModule = {};
+    var correctCount = 0;
+    var calls = QUESTIONS.map(function (q) {
+      return NetQuest.post("/api/answer", { question_id: q.id, answer: answers[q.id] })
+        .then(function (data) {
+          var ok = data.result && data.result.correct;
+          if (ok) correctCount += 1;
+          var m = perModule[q.module_id] || { correct: 0, total: 0 };
+          m.total += 1;
+          if (ok) m.correct += 1;
+          perModule[q.module_id] = m;
+          var block = document.querySelector('.check-block[data-qid="' + q.id + '"]');
+          var fb = block.querySelector(".fb");
+          fb.innerHTML = '<div class="feedback ' + (ok ? "ok" : "bad") + '"><h4>' +
+            (ok ? "Correct" : "Not quite") + "</h4><div>" +
+            NetQuest.escape(data.result.feedback) + "</div></div>";
+          if (!ok) block.querySelectorAll(".option").forEach(function (opt) {
+            if (+opt.querySelector("input").value === q.answer) opt.classList.add("correct");
+          });
+        });
+    });
+
+    Promise.all(calls).then(function () {
+      var plan = [];
+      var html = '<div class="card"><div class="card-title"><h2 class="mt0">Your path</h2>' +
+        '<span class="badge mono">' + correctCount + "/" + QUESTIONS.length + "</span></div>";
+      html += '<p class="small">A module at 75% or above is treated as strong and deprioritised. Everything below goes into the plan, in this order.</p>';
+      html += "<table><tr><th>Module</th><th>Score</th><th>Verdict</th><th>Action</th></tr>";
+      Object.keys(MODULES).forEach(function (mid) {
+        var m = perModule[mid];
+        if (!m) return;
+        var pct = Math.round(100 * m.correct / m.total);
+        var strong = pct >= 75;
+        plan.push({ module_id: mid, verdict: strong ? "strong" : "study", percent: pct });
+        html += "<tr><td>" + MODULES[mid].title + '</td><td class="mono">' + pct +
+          '%</td><td><span class="badge ' + (strong ? "ok" : "warn") + '">' +
+          (strong ? "strong — skip or skim" : "study") + "</span></td><td>" +
+          '<a class="btn small ghost" href="/learn/' + mid + '">Open</a></td></tr>';
+      });
+      html += "</table>";
+      var study = plan.filter(function (p) { return p.verdict === "study"; });
+      if (study.length) {
+        html += '<div class="note"><b>Start here:</b> ' +
+          study.map(function (p) { return MODULES[p.module_id].title; }).join(" &rarr; ") +
+          ". The dashboard recommendation follows this order automatically.</div>";
+      } else {
+        html += '<div class="note"><b>Nothing below 75%.</b> Go straight to the mock interview, case studies and revision — the curriculum will not teach you much you do not already know.</div>';
+      }
+      html += '<div class="btn-row mt16"><a class="btn primary" href="/learn">Open the curriculum</a>' +
+        '<a class="btn ghost" href="/interview">Mock interview</a></div></div>';
+      document.getElementById("diagResults").innerHTML = html;
+
+      var total = plan.length ? Math.round(plan.reduce(function (s, p) { return s + p.percent; }, 0) / plan.length) : 0;
+      NetQuest.post("/diagnostic/finish", { plan: plan, score: total })
+        .then(function () { NetQuest.toast("Plan saved"); btn.textContent = "Plan built"; });
+    });
+  });
+})();
+</script>
+{% endblock %}

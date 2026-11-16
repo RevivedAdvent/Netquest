@@ -1,0 +1,113 @@
+{
+  "id": "case09",
+  "order": 9,
+  "title": "Load average 42, CPUs idle",
+  "module_id": "m7",
+  "difficulty": "advanced",
+  "tagline": "The monitoring says the box is dying. CPU is 6% used. The service is being killed and restarted every few minutes.",
+  "environment": ["Fedora application server, 8 vCPU, 16 GB RAM", "systemd unit with Restart=always", "NFS mount for shared attachments", "Monitoring alarms on load average"],
+  "topology": "clients --> myapp (systemd unit) --> local disk + /mnt/nfs (NFSv4)",
+  "symptoms": [
+    "Load average climbs to 30-50 while %CPU stays under 10%",
+    "myapp requests hang for many seconds, then fail",
+    "systemctl status shows repeated restarts",
+    "Users report intermittent 504s from the reverse proxy"
+  ],
+  "objectives": [
+    "Read load average correctly: it counts runnable and uninterruptible tasks",
+    "Use D-state processes and iowait to distinguish CPU saturation from IO waiting",
+    "Trace the failure back to a dependency (NFS) rather than to the application"
+  ],
+  "tools": ["uptime", "top", "ps stat", "vmstat", "journalctl -k", "systemctl status", "mountstats"],
+  "framework": [
+    "Is the load CPU-bound or wait-bound?",
+    "Which processes are in D state, and what are they waiting on?",
+    "Did the kernel or systemd take any action (OOM, timeout, restart)?"
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "label": "Load versus CPU",
+      "command": "uptime; vmstat 1 3",
+      "output": " 10:20:01 up 12 days,  load average: 41.22, 38.91, 22.40\nprocs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----\n r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st\n 2 39      0 812344  92112 2213440    0    0     4   980  812 4410  3  3  6 88  0\n 3 38      0 801122  91880 2211220    0    0     8   972  799 4380  3  2  5 90  0",
+      "insight": "39-38 processes in uninterruptible sleep (b column) and 88-90% iowait. The load is almost entirely blocked-on-IO tasks, not runnable CPU work.",
+      "requires": []
+    },
+    {
+      "id": "e2",
+      "label": "Which processes are blocked",
+      "command": "ps -eo pid,ppid,stat,wchan:24,cmd --sort=-stat | awk '$3 ~ /^D/' | head -8",
+      "output": "  PID  PPID STAT WCHAN                    CMD\n 8102  4242 D    rpc_wait_bit_killable    /usr/bin/java -jar /opt/myapp/app.jar\n 8103  4242 D    rpc_wait_bit_killable    /usr/bin/java -jar /opt/myapp/app.jar\n 8104  4242 D    rpc_wait_bit_killable    /usr/bin/java -jar /opt/myapp/app.jar\n 8105  4242 D    rpc_wait_bit_killable    /usr/bin/java -jar /opt/myapp/app.jar",
+      "insight": "Every blocked task is a myapp worker waiting in an RPC call — the NFS client. wchan names the kernel function, which identifies the dependency without guessing.",
+      "requires": ["e1"]
+    },
+    {
+      "id": "e3",
+      "label": "The mount's health",
+      "command": "mount | grep nfs; timeout 5 ls /mnt/nfs/attachments | head -3; echo exit=$?",
+      "output": "/dev/mapper/vg0-data on /mnt/nfs type ext4 (rw)  <-- stale mount left over, the NFS share is not there\n\n(timeout)\nexit=124",
+      "insight": "The NFS share is not mounted at all; a stale local directory is there instead, and every access blocks. Requests into that path hang rather than fail, which is why threads pile up in D state.",
+      "requires": ["e2"]
+    },
+    {
+      "id": "e4",
+      "label": "Why the service keeps restarting",
+      "command": "systemctl status myapp --no-pager | head -8",
+      "output": "* myapp.service - My Application\n     Active: activating (auto-restart) (Result: timeout) since Mon 2026-11-17 10:18:44 UTC\n    Process: 4242 ExecStart=/usr/bin/java -jar /opt/myapp/app.jar (code=killed, signal=TERM)\n   Main PID: 4242 (code=killed, signal=TERM)\n\nNov 17 10:18:44 host systemd[1]: myapp.service: State 'stop-sigterm' timed out. Killing.",
+      "insight": "systemd's stop timeout expired because workers were stuck in D state and could not be signalled out of it. systemd escalated to SIGKILL, so Restart=always restarted the unit and the cycle repeats.",
+      "requires": ["e3"]
+    },
+    {
+      "id": "e5",
+      "label": "The dependency's history",
+      "command": "journalctl -b --no-pager | grep -i -E 'nfs|rpc' | tail -5",
+      "output": "Nov 17 08:41:02 host kernel: nfs: server 10.10.9.20 not responding, still trying\nNov 17 08:41:02 host kernel: nfs: server 10.10.9.20 OK\nNov 17 09:12:31 host kernel: nfs: server 10.10.9.20 not responding, timed out\nNov 17 09:12:31 host systemd[1]: mnt-nfs.mount: Mount process exited, code=exited, status=32",
+      "insight": "The NFS server became unreachable, the mount was lost, and systemd recorded the unit failure. This is the origin of the whole cascade.",
+      "requires": ["e4"]
+    },
+    {
+      "id": "e6",
+      "label": "Is memory the underlying cause?",
+      "command": "journalctl -k -b | grep -i -m2 'out of memory\\|oom'; free -m | head -2",
+      "output": "(no output)\n               total        used        free      shared  buff/cache   available\nMem:           15884        4021        793        112       11070       11234",
+      "insight": "No OOM events and plenty of available memory, so this is not memory pressure. Ruling this out matters: OOM and IO-wait can both produce restarts but need opposite fixes.",
+      "requires": ["e5"]
+    }
+  ],
+  "hypotheses": [
+    {"text": "The application has a CPU-hungry code path.", "verdict": "rejected", "why": "CPU is 6% idle-time-heavy with iowait near 90%; the runnable count is 2-3 while blocked count is 38."},
+    {"text": "Workers are blocked on a dead NFS mount, so threads accumulate in D state and systemd's stop timeout kills the unit.", "verdict": "accepted", "why": "All blocked tasks wait in rpc_wait_bit_killable, the mount is stale, and systemd logged an NFS mount failure followed by stop-sigterm timeouts."},
+    {"text": "The machine is out of memory and the OOM killer is restarting the service.", "verdict": "rejected", "why": "No OOM messages and 11 GB available."},
+    {"text": "The reverse proxy is timing out because of a network problem.", "verdict": "rejected", "why": "The proxy's 504s are a downstream symptom of workers that never respond."}
+  ],
+  "min_evidence": 4,
+  "diagnosis_accept": ["nfs", "stale mount", "uninterruptible", "d state", "iowait", "network filesystem"],
+  "diagnosis_reject": ["cpu", "out of memory", "oom", "memory leak", "the application is slow by design", "network latency to the proxy"],
+  "solution": {
+    "root_cause": "The NFS server at 10.10.9.20 became unreachable and the mount was lost, leaving a stale (or unmounted) path behind. Every myapp request that touches /mnt/nfs blocks in an uninterruptible RPC wait, so worker threads accumulate in D state without consuming CPU. Load average counts those tasks, hence 41 with idle CPUs. systemd's stop timeout cannot interrupt D-state tasks, so it SIGKILLs and restarts the unit, and the cycle repeats.",
+    "resolution": "Restore the NFS dependency (bring the share back or remount with the correct options), then unmount the stale path and restart myapp cleanly. Make the application resilient: use hard,timeo/retrans/soft where appropriate with explicit timeouts, or a local cache with a circuit breaker, so a missing share degrades gracefully instead of blocking threads. Configure NFS mounts with x-systemd.automount and nofail so a dead share does not stall the boot and start path.",
+    "verification": "Load average falls to the number of runnable tasks; ps shows no D-state workers; mount | grep nfs shows the real share; the service stays up for longer than the previous restart interval; and requests touching attachments succeed or fail fast rather than hanging.",
+    "lessons": [
+      "Load average is a count of runnable plus uninterruptible tasks. It is not a CPU measurement.",
+      "D state cannot be interrupted by signals, including SIGKILL. Restarting harder does not help.",
+      "Restart=always converts a dependency failure into a restart loop, which hides the original cause."
+    ],
+    "interview_followups": [
+      "Why can a process in D state not be killed?",
+      "What would you change so a dead NFS share does not take the service down?",
+      "How do iowait and load average relate, and how can they mislead?"
+    ]
+  },
+  "resolution_options": [
+    {"text": "Restore the NFS share and remount it, then restart the service", "correct": true, "why": "Removes the blocking dependency and clears the D-state backlog."},
+    {"text": "Make the application tolerate a missing share with timeouts and fast failure", "correct": true, "why": "Prevents a dependency outage from becoming a service outage in future."},
+    {"text": "Raise TimeoutStopSec so systemd stops killing the unit", "correct": false, "why": "Impossible to satisfy: D-state tasks cannot be signalled, so the timeout will still expire."},
+    {"text": "Add more vCPUs", "correct": false, "why": "CPU is idle; capacity is not the constraint."},
+    {"text": "Set Restart=no to stop the loop", "correct": false, "why": "Stops the visible symptom and leaves the service dead, with the root cause still in place."}
+  ],
+  "interview_questions": [
+    {"q": "Load average is 40 but CPU is idle. What does that mean?", "a": "Load average counts runnable and uninterruptible-sleep tasks. High load with low CPU means most of those tasks are blocked in the kernel, typically on IO or a network filesystem, so you look at iowait and D-state processes rather than CPU."},
+    {"q": "A process will not die even with kill -9. Why?", "a": "Signals are delivered when the task returns to user space. If it is stuck in an uninterruptible kernel wait (D state), the signal is pending until the wait completes. Nothing short of resolving the underlying IO unblocks it."},
+    {"q": "How do you design a service so a dead NFS mount does not take it down?", "a": "Bound every dependency access with a timeout, fail fast rather than block, cache what can be cached, and use mount options that bound retries. Then monitor the dependency so you know before users do."}
+  ]
+}

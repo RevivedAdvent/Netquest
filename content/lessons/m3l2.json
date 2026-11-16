@@ -1,0 +1,145 @@
+{
+  "id": "m3l2",
+  "module_id": "m3",
+  "title": "DHCP failure modes and how each one looks",
+  "minutes": 22,
+  "summary": "Six ways DHCP breaks, the exact symptom each produces, and the command that proves it. This is the diagnostic core of the module.",
+  "sections": [
+    {
+      "heading": "Failure 1: no server reachable, no relay",
+      "html": "<p><strong>Symptom:</strong> client has a 169.254.x.x address (IPv4 link-local, RFC 3927) and no default route. Windows calls this APIPA.</p><p><strong>Why:</strong> DISCOVER goes out, nothing answers, the client retries with exponential backoff and eventually self-assigns link-local so at least local communication works.</p><p><strong>Prove it:</strong></p><pre>ip -4 addr show dev eth0        <span class='c'># 169.254.x.x/16</span>ip route                        <span class='c'># only a 169.254.0.0/16 link route, no default</span>sudo tcpdump -i eth0 -n port 67 or port 68   <span class='c'># DISCOVERs repeating, no replies</span>journalctl -u NetworkManager | tail -30       <span class='c'># DHCP4 ... timed out</span></pre><p>On Linux, 169.254 is decided by <code>ipv4.link-local</code> settings; it may be disabled, in which case you see 'no address' instead. Either way, the absence of a lease is the finding.</p>"
+    },
+    {
+      "heading": "Failure 2: pool exhausted",
+      "html": "<p><strong>Symptom:</strong> some clients work, new ones do not. The server replies, but with a NAK or simply nothing.</p><p><strong>Why:</strong> every address in the scope is leased. The server has nothing to offer; a DISCOVER may get no OFFER at all, or the ACK is replaced by a DHCPNAK when a client asks for an address the server cannot honour.</p><p><strong>Prove it:</strong> on the server, inspect the lease database (ISC: <code>/var/lib/dhcpd/dhcpd.leases</code>, dnsmasq: <code>/var/lib/misc/dnsmasq.leases</code>, Windows: the DHCP console). Count leases vs scope size. On the client, look for NAKs in the journal.</p><p><strong>Design note:</strong> pool exhaustion is often not 'too many hosts' but 'leases are too long'. A 7-day lease on a guest Wi-Fi VLAN with 200 daily visitors exhausts a /24 quickly.</p>"
+    },
+    {
+      "heading": "Failure 3: relay missing or misconfigured",
+      "html": "<p><strong>Symptom:</strong> clients in one VLAN fail while clients in the server's own VLAN work fine. The server log shows no DISCOVER for the broken VLAN.</p><p><strong>Why:</strong> broadcast does not cross a router. Without a relay (or with <code>ip helper-address</code> pointing at the wrong address) the DISCOVER never arrives.</p><p><strong>Prove it:</strong> check the relay/helper configuration on the gateway; capture on the server with <code>tcpdump -n -i any port 67</code> and see whether the DISCOVER arrives with the expected <code>giaddr</code>. A wrong-scope relay is subtler: the DISCOVER arrives but <code>giaddr</code> maps to a pool with no space, so nothing is offered.</p>"
+    },
+    {
+      "heading": "Failure 4: wrong options (gateway, DNS, search domain)",
+      "html": "<p><strong>Symptom:</strong> the client gets an address and can talk on its own subnet, but nothing else works — or the address works but names do not resolve.</p><p><strong>Why:</strong> option 3 (router) or option 6 (DNS) is wrong, missing, or points at a decommissioned server. A missing option 15/119 also breaks short-name resolution in a corporate domain.</p><p><strong>Prove it:</strong></p><pre>ip route          <span class='c'># is there a default? is the gateway plausible?</span>ip route get 8.8.8.8cat /etc/resolv.conf        <span class='c'># which resolver did I get?</span>resolvectl status | head -20  <span class='c'># if systemd-resolved is in use</span>nmcli -f IP4.ADDRESS,IP4.GATEWAY,IP4.DNS device show eth0</pre><p>The giveaway is that the address/mask are correct (so DHCP worked) but the default route or resolver is absent or wrong (so the <em>options</em> are wrong).</p>"
+    },
+    {
+      "heading": "Failure 5: address conflict",
+      "html": "<p><strong>Symptom:</strong> intermittent connectivity, sessions dropping mid-transfer, two hosts appearing to answer for one address.</p><p><strong>Why:</strong> a statically configured host inside the DHCP pool range, or a stale server lease database. DHCP servers normally probe with ICMP/ARP before offering, but that check is not guaranteed.</p><p><strong>Prove it:</strong> <code>arping -D -I eth0 10.0.0.50</code> on a machine that suspects a conflict; look for two MACs for one IP in the switch's ARP/MAC tables; check the DHCP lease history against a static IP list.</p>"
+    },
+    {
+      "heading": "Failure 6: rogue DHCP server",
+      "html": "<p><strong>Symptom:</strong> most clients are fine, but some get a nonsense gateway (often a home router someone plugged in) and therefore no internet access.</p><p><strong>Why:</strong> DHCP has no authentication. The first OFFER to arrive wins, so a rogue server local to the segment beats the legitimate one across a relay.</p><p><strong>Prove it:</strong> capture OFFERs and compare the server identifier (option 54) against the expected server. Enterprise switches defend with DHCP snooping, which marks ports as trusted or untrusted.</p>"
+    },
+    {
+      "heading": "Summary table",
+      "html": "<table><tr><th>Failure</th><th>Client symptom</th><th>Fastest evidence</th></tr><tr><td>No server / no relay</td><td>169.254 address, no default route</td><td><code>tcpdump port 67 or 68</code> — DISCOVERs, no reply</td></tr><tr><td>Pool exhausted</td><td>New clients fail, existing work</td><td>Server lease file vs scope size</td></tr><tr><td>Relay broken</td><td>One VLAN fails</td><td>Server sees no DISCOVER with that <code>giaddr</code></td></tr><tr><td>Bad option 3</td><td>Local OK, remote fails</td><td><code>ip route</code> shows missing/wrong default</td></tr><tr><td>Bad option 6</td><td>Names fail, IPs work</td><td><code>/etc/resolv.conf</code> / <code>resolvectl status</code></td></tr><tr><td>Conflict</td><td>Intermittent, sessions drop</td><td><code>arping -D</code>, duplicate MAC entries</td></tr><tr><td>Rogue server</td><td>Some clients only</td><td>OFFER source / option 54 mismatch</td></tr></table>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m3l2-1",
+      "type": "mcq",
+      "prompt": "A host has 169.254.11.4/16 and no default route. Which single command best distinguishes 'DHCP server down' from 'DHCP server answering but with bad options'?",
+      "options": [
+        "ip route get 1.1.1.1",
+        "ping 8.8.8.8",
+        "dig google.com",
+        "tcpdump -i eth0 -n port 67 or port 68"
+      ],
+      "answer": 3,
+      "explanation": "The capture shows whether DISCOVER/REQUEST are answered at all. An answer with bad options gives a real address, not link-local, so 169.254 already leans toward 'no lease' — the capture confirms it.",
+      "why_wrong": {
+        "1": "With no default route, no external ping can succeed; it proves nothing about DHCP.",
+        "2": "DNS will fail either way.",
+        "0": "ip route get shows 'unreachable' but not why."
+      },
+      "concepts": [
+        "DHCP diagnostics",
+        "tcpdump"
+      ]
+    },
+    {
+      "id": "q-m3l2-2",
+      "type": "mcq",
+      "prompt": "Clients in VLAN 40 receive no address; clients in VLAN 10 (same segment as the DHCP server) are fine. What is the most likely cause?",
+      "options": [
+        "The scope for VLAN 40 is exhausted",
+        "The DHCP relay / ip helper is missing or wrong for VLAN 40",
+        "The switch is blocking UDP 68",
+        "The DNS server is unreachable"
+      ],
+      "answer": 1,
+      "explanation": "Broadcast does not cross the router, so VLAN 40 needs a relay. VLAN 10 works because the broadcast reaches the server directly. Scope exhaustion is possible but second on the list and would still show DISCOVERs arriving at the server.",
+      "why_wrong": {
+        "0": "Plausible but the relay is the structural difference between the two VLANs.",
+        "3": "DNS is unrelated to getting a lease.",
+        "2": "Switches do not filter UDP ports unless ACLs are configured."
+      },
+      "concepts": [
+        "relay agent",
+        "VLAN"
+      ]
+    },
+    {
+      "id": "q-m3l2-3",
+      "type": "self",
+      "prompt": "A laptop gets an address of 10.50.3.77/24, can ping 10.50.3.1, but cannot reach anything outside the building. DNS also fails. Give your diagnostic sequence and what each step rules in or out.",
+      "checklist": [
+        {
+          "text": "Confirm the address and mask are correct for the intended subnet.",
+          "weight": 1
+        },
+        {
+          "text": "Check the routing table for a default route; its absence points at a missing DHCP option 3.",
+          "weight": 2
+        },
+        {
+          "text": "Check the gateway is on-link and reachable (ping/ip neigh) to distinguish 'no route' from 'unreachable gateway'.",
+          "weight": 2
+        },
+        {
+          "text": "Check the resolver configuration (/etc/resolv.conf or resolvectl) — DNS failing may be a downstream consequence of no gateway.",
+          "weight": 1
+        },
+        {
+          "text": "Test by IP outside the subnet to separate routing from DNS.",
+          "weight": 1
+        },
+        {
+          "text": "Inspect the DHCP scope options on the server rather than fixing things host by host.",
+          "weight": 2
+        }
+      ],
+      "reference": "<p>Address and mask are fine, so DHCP completed. The failure is off-link, so the chain is: routing table -> default route -> next hop -> upstream. If <code>ip route</code> shows no default, the DHCP scope is missing option 3 (or an option 121 classless route). If it shows a default that is unreachable, the gateway option is wrong or the gateway is down — <code>ip neigh</code> and a ping to the gateway separate those. DNS failing is likely secondary: with no route out, the resolver is unreachable, so fix routing first and re-test DNS. Confirm by pinging an external IP literal, which requires no DNS. The real fix is at the scope, applied once rather than per host.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "DHCP options",
+        "routing",
+        "diagnostic order"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Networking diagnosis order",
+      "text": "DHCP failures are configuration failures. Always verify what the host actually received before suspecting anything upstream."
+    },
+    {
+      "title": "DNS",
+      "text": "Most 'DNS is broken' reports are actually 'no gateway', because DNS cannot work without reachability."
+    },
+    {
+      "title": "Case study 1",
+      "text": "The DHCP failure mission walks these six scenarios with hidden root causes."
+    }
+  ],
+  "interview": [
+    {
+      "q": "What happens when a DHCP server becomes unreachable?",
+      "a": "Existing clients keep their addresses until T1, try unicast renewal, then rebind at T2 by broadcast, and finally lose the lease at expiry. New clients get nothing and fall back to 169.254/16. The outage therefore appears gradually, up to half a lease later."
+    },
+    {
+      "q": "How would you find a rogue DHCP server?",
+      "a": "Capture DHCP OFFER/ACK traffic and compare option 54 (server identifier) with the expected server, or use nmap's broadcast-dhcp-discover. On managed switches, DHCP snooping with trusted ports prevents it."
+    }
+  ]
+}

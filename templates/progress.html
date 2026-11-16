@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Progress — NetQuest{% endblock %}
+{% block crumb %}Assess / Progress{% endblock %}
+{% block mastery_pct %}{{ stats.mastery }}%{% endblock %}
+
+{% block content %}
+<div class="wrap-wide">
+  <div class="split mb16">
+    <div>
+      <div class="eyebrow">{{ stats.days_remaining }} days remaining &middot; {{ stats.attempts }} recorded attempts</div>
+      <h1 class="mt0">Progress</h1>
+      <p class="lead mb0">Weighted mastery, per module. This is the honest number: it falls when you skip labs and case studies, because those are most of the weight.</p>
+    </div>
+    <div class="right">
+      <div class="mono" style="font-size:30px">{{ stats.rank }}</div>
+      <div class="small muted">{{ stats.xp }} XP &middot; {{ stats.streak }}-day streak</div>
+    </div>
+  </div>
+
+  <div class="grid grid-4 mb16">
+    <div class="stat"><div class="label">Mastery</div><div class="value">{{ stats.mastery }}%</div>
+      <div class="bar mt8"><span style="width: {{ stats.mastery }}%"></span></div></div>
+    <div class="stat"><div class="label">Lessons</div><div class="value">{{ stats.lessons_completed }}/{{ stats.lessons_total }}</div></div>
+    <div class="stat"><div class="label">Labs simulated</div><div class="value">{{ stats.labs_done }}/{{ stats.labs_total }}</div></div>
+    <div class="stat"><div class="label">Cases solved</div><div class="value">{{ stats.missions_solved }}/{{ stats.missions_total }}</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title"><h3 class="mt0">Per module</h3><a class="btn ghost small" href="/learn">Curriculum</a></div>
+    <table>
+      <tr><th>Module</th><th>Mastery</th><th>Lessons</th><th>Checks</th><th>Labs</th><th>Cases</th><th>Assessment</th><th>Status</th></tr>
+      {% for m in stats.modules %}
+      <tr>
+        <td><a href="/learn/{{ m.module_id }}">{{ m.number }}. {{ m.title }}</a></td>
+        <td style="width:140px"><div class="barrow"><div class="bar"><span style="width: {{ m.mastery }}%"></span></div><span class="pct">{{ m.mastery }}%</span></div></td>
+        <td class="mono">{{ m.lessons_completed }}/{{ m.lessons_total }}</td>
+        <td class="mono">{{ m.checks_percent }}%</td>
+        <td class="mono">{{ m.labs_done }}/{{ m.labs_total }}</td>
+        <td class="mono">{{ m.missions_solved }}/{{ m.missions_total }}</td>
+        <td class="mono">{{ m.assessment_percent }}%</td>
+        <td><span class="badge {{ 'ok' if m.status == 'mastered' else 'warn' if m.status == 'assessed' else '' }}">{{ m.status | replace('_',' ') }}</span></td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <div class="grid grid-2">
+    <div class="card">
+      <div class="card-title"><h3 class="mt0">Attempts per day</h3></div>
+      {% set maxh = (history | map(attribute='attempts') | max) if history else 1 %}
+      {% for h in history %}
+      <div class="barrow" style="margin-bottom:6px">
+        <span class="mono small" style="min-width:74px">{{ h.day[5:] }}</span>
+        <div class="bar"><span style="width: {{ (100 * h.attempts / (maxh or 1)) | round }}%"></span></div>
+        <span class="pct">{{ h.attempts }}</span>
+      </div>
+      {% else %}
+      <p class="small muted mb0">No attempts recorded yet.</p>
+      {% endfor %}
+    </div>
+
+    <div class="card">
+      <div class="card-title"><h3 class="mt0">Accuracy by module</h3></div>
+      {% for p in per_module %}
+      <div class="barrow" style="margin-bottom:6px">
+        <span class="mono small" style="min-width:46px">{{ p.module_id }}</span>
+        <div class="bar"><span style="width: {{ (100 * (p.avg or 0)) | round }}%"></span></div>
+        <span class="pct">{{ (100 * (p.avg or 0)) | round | int }}%</span>
+      </div>
+      {% else %}
+      <p class="small muted mb0">Nothing scored yet.</p>
+      {% endfor %}
+      <p class="small muted mt16 mb0">A low accuracy with high lesson completion means you are reading without testing yourself.</p>
+    </div>
+  </div>
+
+  <div class="grid grid-2">
+    <div class="card tight">
+      <div class="card-title"><h3 class="mt0">Needs revision</h3><a class="btn ghost small" href="/revision">Revision</a></div>
+      {% for r in revision %}
+      <div style="padding:7px 0; border-bottom:1px solid #262626">
+        <a href="{{ r.href }}" class="small" style="color:#e8e8e8">{{ r.prompt | truncate(86) }}</a>
+        <div class="small muted">{{ r.module_title }} &middot; best {{ r.best }}% &middot; {{ r.tries }} attempt{{ '' if r.tries == 1 else 's' }}</div>
+      </div>
+      {% else %}
+      <p class="small mb0">Nothing below 75%. Either you are solid or you have not tested yourself enough.</p>
+      {% endfor %}
+    </div>
+
+    <div class="card tight">
+      <div class="card-title"><h3 class="mt0">Latest attempts</h3></div>
+      <table>
+        <tr><th>Question</th><th>Result</th><th>When</th></tr>
+        {% for a in latest %}
+        <tr>
+          <td class="mono small">{{ a.question_id | truncate(34) }}</td>
+          <td class="mono small">{{ a.score }}/{{ a.max_score }}</td>
+          <td class="mono small muted">{{ a.timestamp[5:16] }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="small muted">Nothing yet.</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+  {% if interview_sessions %}
+  <div class="card tight">
+    <div class="card-title"><h3 class="mt0">Last mock interview</h3><a class="btn ghost small" href="/interview">New session</a></div>
+    <pre class="mb16" style="font-size:11.5px">{{ interview_sessions }}</pre>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

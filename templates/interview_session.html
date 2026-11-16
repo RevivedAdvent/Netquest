@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Interview session {{ sid }} — NetQuest{% endblock %}
+{% block crumb %}Assess / <a href="/interview">Mock Interview</a> / Session {{ sid }}{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap">
+  <div class="eyebrow">Session {{ sid }} &middot; started {{ row.started_at }}{% if row.finished_at %} &middot; finished {{ row.finished_at }}{% endif %}</div>
+  <h1 class="mt0">Interview review</h1>
+
+  {% if not report %}
+  <div class="note">
+    <b>This session is not finished.</b> Its answers are recorded, but the report is produced when the last question is submitted.
+    <a href="/interview">Return to the interview</a> and run a new session, or continue the topic drills on the module pages.
+  </div>
+  {% else %}
+  <div class="grid grid-4 mb16">
+    <div class="stat"><div class="label">Overall</div><div class="value">{{ report.overall }}%</div>
+      <div class="bar mt8"><span style="width: {{ report.overall }}%"></span></div></div>
+    <div class="stat"><div class="label">Questions</div><div class="value">{{ report.questions }}</div></div>
+    <div class="stat"><div class="label">Strengths</div><div class="value">{{ report.strengths | length }}</div>
+      <div class="sub">{{ report.strengths | join(', ') | truncate(40) }}</div></div>
+    <div class="stat"><div class="label">To revise</div><div class="value">{{ report.weaknesses | length }}</div>
+      <div class="sub">{{ report.weaknesses | join(', ') | truncate(40) }}</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title"><h3 class="mt0">By topic</h3></div>
+    <table>
+      <tr><th>Topic</th><th>Score</th><th>Module</th></tr>
+      {% for t, v in report.topics.items() %}
+      <tr>
+        <td>{{ t }}</td>
+        <td style="width:160px"><div class="barrow"><div class="bar"><span style="width: {{ v }}%"></span></div><span class="pct">{{ v }}%</span></div></td>
+        <td><a href="/learn/{{ report.topic_modules.get(t, '') }}">{{ report.topic_modules.get(t, '—') }}</a></td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="card-title"><h3 class="mt0">Advice</h3></div>
+    <ul class="mb0">{% for a in report.advice %}<li>{{ a }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  <h2>Answers</h2>
+  {% for a in answers %}
+  <div class="card tight">
+    <div class="split">
+      <b class="mono small">{{ a.question_id }}</b>
+      <span class="badge {{ 'ok' if a.score >= 70 else 'warn' }}">{{ a.score }}%</span>
+    </div>
+    {% if a.answer %}
+    <div class="note mt8 mb0">{{ a.answer }}</div>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="small muted">No answers recorded for this session.</p>
+  {% endfor %}
+
+  <hr>
+  <div class="btn-row">
+    <a class="btn" href="/interview">New session</a>
+    <a class="btn ghost" href="/progress">Progress</a>
+    <a class="btn ghost" href="/revision">Revision</a>
+  </div>
+</div>
+{% endblock %}

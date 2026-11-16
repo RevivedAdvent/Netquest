@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% block title %}Mock Interview — NetQuest{% endblock %}
+{% block crumb %}Assess / Mock Interview{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap-wide">
+  <div class="eyebrow">Deterministic &middot; branching &middot; self-assessed against curated checklists</div>
+  <h1 class="mt0">Mock Interview</h1>
+  <p class="lead" style="max-width:800px">{{ bank.intro }}</p>
+
+  <div class="grid grid-hero">
+    <div>
+      <div class="card" id="setupCard">
+        <div class="card-title"><h3 class="mt0">Set up a session</h3></div>
+        <div class="field-row">
+          <label class="field" style="min-width:150px">
+            <span>Questions</span>
+            <select id="length">
+              <option value="6">6 — quick check</option>
+              <option value="8" selected>8 — standard</option>
+              <option value="12">12 — full loop</option>
+              <option value="16">16 — exhaustive</option>
+            </select>
+          </label>
+          <label class="field" style="min-width:240px">
+            <span>Focus</span>
+            <select id="focus">
+              <option value="all" selected>All topics, weakest first</option>
+              {% for t in bank.topics %}<option value="{{ t.id }}">{{ t.label }}</option>{% endfor %}
+            </select>
+          </label>
+          <button class="btn primary" id="startBtn" type="button">Start interview</button>
+        </div>
+        <p class="small mb0">Questions are ordered by your recorded mastery per topic, so weak areas come first. A weak answer triggers a probing follow-up; a strong one triggers a harder question.</p>
+      </div>
+
+      <div class="card hidden" id="qCard">
+        <div class="card-title">
+          <h3 class="mt0" id="qTopic">Question</h3>
+          <span class="badge mono" id="qProgress"></span>
+        </div>
+        <div class="qtext" id="qText" style="font-size:16px"></div>
+        <p class="small" id="qKind"></p>
+
+        <label class="field">
+          <span>Your answer (speak it out loud first, then write the key points)</span>
+          <textarea id="answerBox" class="prose" placeholder="Say it out loud. Then write the parts you actually said — not the parts you wish you had said."></textarea>
+        </label>
+
+        <div class="small muted mb8">Tick exactly what you covered:</div>
+        <div id="checklist"></div>
+
+        <div class="btn-row mt16">
+          <button class="btn primary" id="submitBtn" type="button">Submit answer</button>
+          <span class="small muted" id="avgSoFar"></span>
+        </div>
+        <div id="answerFeedback" class="mt16"></div>
+      </div>
+
+      <div id="reportCard"></div>
+    </div>
+
+    <div>
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">How this is graded</h3></div>
+        <ul class="small mb0">
+          <li>Your answer is scored against a curated checklist with weights — the same mental list an interviewer uses.</li>
+          <li>A checklist marked as covered but not said costs you nothing here; it costs you in the real interview.</li>
+          <li>Below 65% earns a probing follow-up. 80% or above earns a harder follow-up.</li>
+          <li>Each topic's average is reported at the end, with links to the module to revise.</li>
+        </ul>
+      </div>
+
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Topics</h3></div>
+        <div class="pill-row">
+          {% for t in bank.topics %}<span class="badge">{{ t.label }}</span>{% endfor %}
+        </div>
+      </div>
+
+      {% if last %}
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Last session</h3></div>
+        <p class="small mb8">Overall {{ last.get('overall') }}% across {{ last.get('questions') }} questions.</p>
+        <div class="pill-row">
+          {% for t, v in last.get('topics', {}).items() %}<span class="badge {{ 'ok' if v >= 70 else 'warn' }}">{{ t }} {{ v }}%</span>{% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="card tight">
+        <div class="card-title"><h3 class="mt0">Past sessions</h3><a class="btn ghost small" href="/progress">Progress</a></div>
+        {% for s in sessions %}
+        <div class="split" style="padding:6px 0; border-bottom:1px solid #262626">
+          <a class="small" href="/interview/session/{{ s.id }}">Session {{ s.id }}</a>
+          <span class="mono small muted">{{ s.score }}% &middot; {{ s.started_at[5:10] }}</span>
+        </div>
+        {% else %}
+        <p class="small mb0">No sessions yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+  var SID = null;
+  var CURRENT = null;
+
+  function setChecklist(items) {
+    var box = document.getElementById("checklist");
+    box.innerHTML = items.map(function (it, i) {
+      return '<label class="checkitem"><input type="checkbox" class="cov" value="' +
+        NetQuest.escape(it.text) + '"><span>' + NetQuest.escape(it.text) + "</span></label>";
+    }).join("");
+  }
+
+  function showQuestion(q, progress, average) {
+    CURRENT = q;
+    document.getElementById("setupCard").classList.add("hidden");
+    document.getElementById("qCard").classList.remove("hidden");
+    document.getElementById("qTopic").textContent = q.topic.replace("-", " ");
+    document.getElementById("qText").textContent = q.prompt;
+    document.getElementById("qKind").textContent = q.kind + " question";
+    document.getElementById("qProgress").textContent =
+      progress ? progress.asked + "/" + progress.target + " asked" : "";
+    document.getElementById("avgSoFar").textContent =
+      average !== undefined && average !== null ? "running average " + average + "%" : "";
+    document.getElementById("answerBox").value = "";
+    document.getElementById("answerFeedback").innerHTML = "";
+    setChecklist(q.checklist);
+    document.getElementById("answerBox").focus();
+  }
+
+  function renderReport(r) {
+    document.getElementById("qCard").classList.add("hidden");
+    document.getElementById("setupCard").classList.remove("hidden");
+    var html = '<div class="card"><div class="card-title"><h2 class="mt0">Session report</h2>' +
+      '<span class="badge mono">' + r.overall + "%</span></div>";
+    html += "<p class=\"small\">" + r.questions + " questions &middot; finished " + r.finished_at + "</p>";
+    html += '<div class="grid grid-4 mt16">';
+    Object.keys(r.topics).forEach(function (t) {
+      var v = r.topics[t];
+      html += '<div class="stat"><div class="label">' + t.replace("-", " ") + '</div><div class="value">' +
+        v + '%</div><div class="bar mt8"><span style="width:' + v + '%"></span></div></div>';
+    });
+    html += "</div>";
+    if (r.strengths.length) {
+      html += '<h4>Strengths</h4><div class="pill-row">' +
+        r.strengths.map(function (t) { return '<span class="badge ok">' + t + "</span>"; }).join("") + "</div>";
+    }
+    if (r.weaknesses.length) {
+      html += '<h4>Revise</h4><div class="pill-row">' +
+        r.weaknesses.map(function (t) {
+          var mod = r.topic_modules[t];
+          return '<a class="badge warn" href="/learn/' + (mod || "") + '">' + t + "</a>";
+        }).join("") + "</div>";
+    }
+    html += "<h4>What to do next</h4><ul class=\\"small\\">" +
+      r.advice.map(function (a) { return "<li>" + NetQuest.escape(a) + "</li>"; }).join("") + "</ul>";
+    html += '<div class="btn-row mt16">' +
+      '<button class="btn primary" id="againBtn" type="button">Run another session</button>' +
+      '<a class="btn ghost" href="/interview/session/' + SID + '">Review every answer</a>' +
+      '<a class="btn ghost" href="/missions">Case studies</a></div></div>';
+    document.getElementById("reportCard").innerHTML = html;
+    document.getElementById("againBtn").addEventListener("click", function () {
+      document.getElementById("reportCard").innerHTML = "";
+    });
+  }
+
+  document.getElementById("startBtn").addEventListener("click", function () {
+    var payload = {
+      length: +document.getElementById("length").value,
+      focus: document.getElementById("focus").value
+    };
+    document.getElementById("startBtn").disabled = true;
+    NetQuest.post("/interview/start", payload)
+      .then(function (data) {
+        SID = data.session_id;
+        showQuestion(data.question, { asked: 0, target: data.remaining });
+        document.getElementById("startBtn").disabled = false;
+        history.replaceState(null, "", "/interview/session/" + SID);
+      })
+      .catch(function (e) {
+        NetQuest.toast(e.message);
+        document.getElementById("startBtn").disabled = false;
+      });
+  });
+
+  document.getElementById("submitBtn").addEventListener("click", function () {
+    if (!SID || !CURRENT) return;
+    var covered = [];
+    document.querySelectorAll("input.cov").forEach(function (n) { if (n.checked) covered.push(n.value); });
+    var text = document.getElementById("answerBox").value;
+    if (!covered.length && text.trim().length < 15) {
+      NetQuest.toast("Write your answer and tick what you covered");
+      return;
+    }
+    document.getElementById("submitBtn").disabled = true;
+    NetQuest.post("/interview/answer", {
+      session_id: SID, question_id: CURRENT.id, answer: text, covered: covered
+    }).then(function (data) {
+      var r = data.result;
+      document.getElementById("answerFeedback").innerHTML =
+        '<div class="feedback ' + (r.percent >= 70 ? "ok" : "bad") + '"><h4>' + r.percent +
+        "% — " + (r.passed ? "passed" : "below the pass mark") + "</h4><div>" +
+        NetQuest.escape(r.feedback) + "</div>" +
+        (data.reference ? '<div class="mt8 small">' + data.reference + "</div>" : "") + "</div>";
+
+      if (data.report) { renderReport(data.report); return; }
+      if (data.next) {
+        setTimeout(function () {
+          showQuestion(data.next, data.progress, data.average);
+          if (data.followup) NetQuest.toast("Follow-up question");
+        }, 900);
+      }
+      document.getElementById("submitBtn").disabled = false;
+    }).catch(function (e) {
+      NetQuest.toast(e.message);
+      document.getElementById("submitBtn").disabled = false;
+    });
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,474 @@
+{
+  "intro": "Rapid recall for the week before an interview. Ten seconds per question, no notes. Anything you get wrong is exactly what to re-read tonight.",
+  "quizzes": [
+    {
+      "id": "rev-addressing",
+      "title": "Addressing and subnetting",
+      "module_ids": [
+        "m1"
+      ],
+      "questions": [
+        {
+          "id": "rev-a1",
+          "type": "mcq",
+          "prompt": "How many usable hosts does a /27 give?",
+          "options": [
+            "32",
+            "30",
+            "14",
+            "62"
+          ],
+          "answer": 1,
+          "explanation": "32 addresses, minus network and broadcast = 30 usable.",
+          "why_wrong": {
+            "0": "That includes the network and broadcast addresses.",
+            "2": "That is a /28.",
+            "3": "That is a /26."
+          }
+        },
+        {
+          "id": "rev-a2",
+          "type": "mcq",
+          "prompt": "What is the broadcast address of 192.168.10.77/26?",
+          "options": [
+            "192.168.10.63",
+            "192.168.10.255",
+            "192.168.10.78",
+            "192.168.10.127"
+          ],
+          "answer": 3,
+          "explanation": "/26 blocks are 64 wide: .64-.127, so .127 is the broadcast for .77.",
+          "why_wrong": {
+            "1": "That would be a /24 broadcast.",
+            "0": "That is the block below .77.",
+            "2": "Broadcast is the last address in the block, not the next one."
+          }
+        },
+        {
+          "id": "rev-a3",
+          "type": "mcq",
+          "prompt": "Which address pair is in the same subnet with /30?",
+          "options": [
+            "10.0.0.5 and 10.0.0.6",
+            "10.0.0.2 and 10.0.0.9",
+            "10.0.0.1 and 10.0.0.4",
+            "10.0.0.5 and 10.0.0.7"
+          ],
+          "answer": 0,
+          "explanation": "A /30 has blocks of 4: .4-.7 with .5 and .6 usable. .7 is the broadcast.",
+          "why_wrong": {
+            "3": "That is the broadcast address.",
+            "2": "Different blocks: .0-.3 and .4-.7.",
+            "1": "Different blocks."
+          }
+        },
+        {
+          "id": "rev-a4",
+          "type": "mcq",
+          "prompt": "A host has 10.1.1.130/25. What is its network address?",
+          "options": [
+            "10.1.1.130",
+            "10.1.1.129",
+            "10.1.1.128",
+            "10.1.1.0"
+          ],
+          "answer": 2,
+          "explanation": "/25 splits the /24 into .0-.127 and .128-.255, so .130 is in the .128 block.",
+          "why_wrong": {
+            "3": "That is the /24 network.",
+            "1": "That is the first usable address, not the network.",
+            "0": "That is the host address."
+          }
+        },
+        {
+          "id": "rev-a5",
+          "type": "mcq",
+          "prompt": "Which range is private (RFC 1918)?",
+          "options": [
+            "192.169.0.0/16",
+            "11.0.0.0/8",
+            "172.16.0.0/12",
+            "172.32.0.0/12"
+          ],
+          "answer": 2,
+          "explanation": "The private blocks are 10/8, 172.16/12 and 192.168/16.",
+          "why_wrong": {
+            "3": "172.32 is public.",
+            "0": "192.169 is public.",
+            "1": "The US DoD block is public and not for private use."
+          }
+        },
+        {
+          "id": "rev-a6",
+          "type": "mcq",
+          "prompt": "What does 169.254.x.x mean on a host?",
+          "options": [
+            "No DHCP lease was obtained, so it self-assigned a link-local address",
+            "The gateway is unreachable",
+            "The host is on a public network",
+            "The mask is wrong"
+          ],
+          "answer": 0,
+          "explanation": "IPv4 link-local (APIPA) is the fallback when DHCP fails. It says nothing about the gateway.",
+          "why_wrong": {
+            "2": "169.254 is reserved and non-routable.",
+            "3": "A wrong mask does not produce this range.",
+            "1": "The gateway cannot be assessed without a lease."
+          }
+        }
+      ]
+    },
+    {
+      "id": "rev-switching",
+      "title": "Switching, VLANs and loops",
+      "module_ids": [
+        "m2"
+      ],
+      "questions": [
+        {
+          "id": "rev-s1",
+          "type": "mcq",
+          "prompt": "Which frames does a switch flood?",
+          "options": [
+            "All unicast frames",
+            "Only unknown unicast",
+            "Only broadcast",
+            "Broadcast, multicast and unknown unicast"
+          ],
+          "answer": 3,
+          "explanation": "Anything without a single known destination port is flooded within the VLAN.",
+          "why_wrong": {
+            "2": "Multicast and unknown unicast are flooded too.",
+            "1": "Broadcast and multicast are also flooded.",
+            "0": "Known unicast is forwarded to one port."
+          }
+        },
+        {
+          "id": "rev-s2",
+          "type": "mcq",
+          "prompt": "The 802.1Q tag adds how many bytes, and where is the VLAN id?",
+          "options": [
+            "2 bytes, in the FCS",
+            "4 bytes, in the tag control information field",
+            "8 bytes, in the payload",
+            "4 bytes, in the ethertype"
+          ],
+          "answer": 1,
+          "explanation": "802.1Q inserts a 4-byte header: 2 bytes TPID (0x8100) and 2 bytes TCI containing the 12-bit VLAN id.",
+          "why_wrong": {
+            "3": "The ethertype is replaced by the TPID but the VLAN id is in the TCI.",
+            "2": "That is not how tagging works.",
+            "0": "The FCS is recalculated, not extended with the VLAN id."
+          }
+        },
+        {
+          "id": "rev-s3",
+          "type": "mcq",
+          "prompt": "MAC flapping between two ports most strongly suggests:",
+          "options": [
+            "A DNS problem",
+            "A Layer 2 loop",
+            "A duplex mismatch",
+            "An IP conflict"
+          ],
+          "answer": 1,
+          "explanation": "The same MAC learned on two ports means two paths exist to it, i.e. a loop.",
+          "why_wrong": {
+            "2": "Duplex shows as collisions, not MAC flapping.",
+            "0": "Unrelated layer.",
+            "3": "An IP conflict shows as ARP instability, not MAC movement between switch ports."
+          }
+        },
+        {
+          "id": "rev-s4",
+          "type": "mcq",
+          "prompt": "What does STP place on a redundant port?",
+          "options": [
+            "A trunking state",
+            "An administratively down state",
+            "A tagged-only state",
+            "A blocking state: it still receives BPDUs but does not forward data"
+          ],
+          "answer": 3,
+          "explanation": "Blocked ports stay aware of the topology so they can take over if the active path fails.",
+          "why_wrong": {
+            "1": "The port is up and listening.",
+            "0": "Trunking is unrelated to STP role.",
+            "2": "Tagging is unrelated."
+          }
+        },
+        {
+          "id": "rev-s5",
+          "type": "mcq",
+          "prompt": "Inter-VLAN traffic requires:",
+          "options": [
+            "A Layer 3 interface in each VLAN, and hosts using it as gateway",
+            "A trunk port only",
+            "A second switch",
+            "A hub"
+          ],
+          "answer": 0,
+          "explanation": "VLANs are separate broadcast domains; only routing moves traffic between them.",
+          "why_wrong": {
+            "1": "A trunk carries the VLANs, it does not route between them.",
+            "3": "A hub is a Layer 1 repeater.",
+            "2": "Extra switches add ports, not routing."
+          }
+        },
+        {
+          "id": "rev-s6",
+          "type": "mcq",
+          "prompt": "Why is a native VLAN mismatch dangerous?",
+          "options": [
+            "It disables the trunk",
+            "It doubles the MTU",
+            "Untagged frames land in the wrong VLAN, silently merging broadcast domains",
+            "It causes collisions"
+          ],
+          "answer": 2,
+          "explanation": "Untagged traffic belongs to each side's native VLAN; if they differ, two VLANs mix with no error.",
+          "why_wrong": {
+            "3": "Collisions are a duplex issue.",
+            "0": "The trunk stays up, which is what makes it dangerous.",
+            "1": "Tagging does not change the MTU."
+          }
+        }
+      ]
+    },
+    {
+      "id": "rev-services",
+      "title": "DHCP and DNS",
+      "module_ids": [
+        "m3"
+      ],
+      "questions": [
+        {
+          "id": "rev-d1",
+          "type": "mcq",
+          "prompt": "Which DHCP option is the default gateway?",
+          "options": [
+            "6",
+            "15",
+            "3",
+            "1"
+          ],
+          "answer": 2,
+          "explanation": "Option 3 is the router. Option 1 is the mask, 6 the DNS servers, 15 the domain name.",
+          "why_wrong": {
+            "0": "Option 6 is DNS.",
+            "3": "Option 1 is the subnet mask.",
+            "1": "Option 15 is the domain name."
+          }
+        },
+        {
+          "id": "rev-d2",
+          "type": "mcq",
+          "prompt": "What does giaddr in a DHCP message carry?",
+          "options": [
+            "The relay's interface address, which selects the scope",
+            "The DNS server address",
+            "The gateway the client should use",
+            "The lease duration"
+          ],
+          "answer": 0,
+          "explanation": "giaddr is how the server knows which subnet the request came from.",
+          "why_wrong": {
+            "2": "That is option 3.",
+            "1": "That is option 6.",
+            "3": "That is option 51."
+          }
+        },
+        {
+          "id": "rev-d3",
+          "type": "mcq",
+          "prompt": "Which record type is an alias that requires an extra lookup?",
+          "options": [
+            "MX",
+            "TXT",
+            "A",
+            "CNAME"
+          ],
+          "answer": 3,
+          "explanation": "CNAME points at another name, so the resolver restarts the query for the target.",
+          "why_wrong": {
+            "2": "A maps a name to an address directly.",
+            "0": "MX points at a mail host, but the classic alias is CNAME.",
+            "1": "TXT holds text, not aliases."
+          }
+        },
+        {
+          "id": "rev-d4",
+          "type": "mcq",
+          "prompt": "A resolver returns NOERROR with an empty answer section. This is:",
+          "options": [
+            "NXDOMAIN",
+            "NODATA — the name exists, the type does not",
+            "SERVFAIL",
+            "A timeout"
+          ],
+          "answer": 1,
+          "explanation": "NOERROR plus no records for that type is NODATA, and the SOA in the authority section sets the negative TTL.",
+          "why_wrong": {
+            "0": "NXDOMAIN has a non-zero rcode and means the name does not exist.",
+            "2": "SERVFAIL is a failure rcode.",
+            "3": "A timeout produces no response at all."
+          }
+        },
+        {
+          "id": "rev-d5",
+          "type": "mcq",
+          "prompt": "What does the TTL on a record control?",
+          "options": [
+            "How long the record stays in the zone",
+            "How long a resolver may cache the answer",
+            "The DNSSEC validity period",
+            "The order in which records are returned"
+          ],
+          "answer": 1,
+          "explanation": "TTL is a caching instruction, and it is the mechanism behind apparent propagation delays.",
+          "why_wrong": {
+            "0": "Records persist until edited.",
+            "3": "Ordering is a separate behaviour.",
+            "2": "DNSSEC uses signature validity, not the record TTL."
+          }
+        },
+        {
+          "id": "rev-d6",
+          "type": "mcq",
+          "prompt": "DNS NXDOMAIN from a public resolver for an internal name usually means:",
+          "options": [
+            "The resolver is down",
+            "The record is broken",
+            "DNSSEC failed",
+            "Split horizon: the internal zone is not visible externally"
+          ],
+          "answer": 3,
+          "explanation": "The name exists only in the internal view, so an external resolver correctly says it does not exist.",
+          "why_wrong": {
+            "1": "The record can be perfectly valid internally.",
+            "0": "A dead resolver gives a timeout.",
+            "2": "DNSSEC failures give SERVFAIL."
+          }
+        }
+      ]
+    },
+    {
+      "id": "rev-linux",
+      "title": "Linux permissions and processes",
+      "module_ids": [
+        "m6",
+        "m7"
+      ],
+      "questions": [
+        {
+          "id": "rev-l1",
+          "type": "mcq",
+          "prompt": "For a file -rw-r----- owned by root:app, what can user bob (in group app) do?",
+          "options": [
+            "Read it",
+            "Read and write it",
+            "Execute it",
+            "Nothing"
+          ],
+          "answer": 0,
+          "explanation": "bob is not the owner, so group bits apply: r only.",
+          "why_wrong": {
+            "1": "Write is owner-only here.",
+            "3": "Group read is granted.",
+            "2": "No execute bit is set for anyone."
+          }
+        },
+        {
+          "id": "rev-l2",
+          "type": "mcq",
+          "prompt": "Which command shows whether a directory is traversable for a given path?",
+          "options": [
+            "stat /path/to/file",
+            "du -sh /path",
+            "namei -l /path/to/file",
+            "ls -l /path/to/file"
+          ],
+          "answer": 2,
+          "explanation": "namei resolves and prints permissions for every component, which is where traversal failures hide.",
+          "why_wrong": {
+            "3": "That shows only the final component.",
+            "0": "Metadata only, no path traversal.",
+            "1": "Disk usage is unrelated."
+          }
+        },
+        {
+          "id": "rev-l3",
+          "type": "mcq",
+          "prompt": "A process is in state D and ignores SIGKILL. What is true?",
+          "options": [
+            "It is already dead",
+            "It is a zombie",
+            "It is blocked in an uninterruptible kernel wait",
+            "It has been stopped by SIGSTOP"
+          ],
+          "answer": 2,
+          "explanation": "D means uninterruptible sleep; the signal stays pending until the kernel operation completes.",
+          "why_wrong": {
+            "0": "It still appears in ps with a PID.",
+            "1": "A zombie shows Z, not D, and consumes no CPU.",
+            "3": "Stopped processes show T."
+          }
+        },
+        {
+          "id": "rev-l4",
+          "type": "mcq",
+          "prompt": "Load average counts:",
+          "options": [
+            "Runnable tasks plus tasks in uninterruptible sleep",
+            "Only tasks waiting on CPU",
+            "Only tasks using CPU",
+            "CPU utilisation over 1/5/15 minutes"
+          ],
+          "answer": 0,
+          "explanation": "That is why load can be high with idle CPUs: the extra tasks are blocked in the kernel.",
+          "why_wrong": {
+            "2": "That would be the runnable count (r in vmstat).",
+            "1": "That misses the uninterruptible tasks.",
+            "3": "CPU utilisation is a separate metric."
+          }
+        },
+        {
+          "id": "rev-l5",
+          "type": "mcq",
+          "prompt": "Permission denied persists with correct mode bits. What is the next check?",
+          "options": [
+            "Reinstall the package",
+            "Reboot",
+            "chmod 777",
+            "ls -Z and the audit log for an AVC denial"
+          ],
+          "answer": 3,
+          "explanation": "SELinux is a second control; the AVC names both contexts and proves the denial.",
+          "why_wrong": {
+            "2": "Destroys the permission model without diagnosing.",
+            "0": "Unlikely to change a label.",
+            "1": "Reproduces the same state."
+          }
+        },
+        {
+          "id": "rev-l6",
+          "type": "mcq",
+          "prompt": "After editing a systemd unit file, what must you run before restarting?",
+          "options": [
+            "systemctl mask",
+            "systemctl daemon-reload",
+            "systemctl enable",
+            "journalctl -xe"
+          ],
+          "answer": 1,
+          "explanation": "systemd caches unit definitions; daemon-reload re-reads them.",
+          "why_wrong": {
+            "2": "enable only affects boot-time start.",
+            "0": "mask prevents starting entirely.",
+            "3": "That reads logs."
+          }
+        }
+      ]
+    }
+  ]
+}

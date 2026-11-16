@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% from "_checks.html" import checks %}
+{% block title %}{{ lesson.title }} — NetQuest{% endblock %}
+{% block crumb %}Study / <a href="/learn/{{ module.id }}">{{ module.title }}</a> / Lesson{% endblock %}
+{% block mastery_pct %}<span id="lessonMastery">—</span>{% endblock %}
+
+{% block content %}
+<div class="wrap">
+  <div class="lesson-head">
+    {% set ns = namespace(idx=1) %}
+    {% for l in module.lessons %}{% if l.id == lesson.id %}{% set ns.idx = loop.index %}{% endif %}{% endfor %}
+    <div class="eyebrow">Module {{ module.number }} &middot; lesson {{ ns.idx }} of {{ module.lessons | length }}</div>
+    <h1 class="mt0">{{ lesson.title }}</h1>
+    <p class="lead mb8">{{ lesson.summary }}</p>
+    <div class="lesson-meta">
+      <span class="badge mono">{{ lesson.minutes }} min</span>
+      <a class="badge" href="/learn/{{ module.id }}">{{ module.title }}</a>
+      <span class="badge {{ 'ok' if state.completed else 'warn' }}" id="lessonState">{{ 'completed' if state.completed else ('in progress' if state.last_accessed else 'not started') }}</span>
+      {% if state.assessment_score %}<span class="badge mono">best {{ state.assessment_score }}%</span>{% endif %}
+    </div>
+  </div>
+
+  {% if request.args.get('completed') %}
+  <div class="feedback ok mb16"><h4>Lesson marked complete</h4><div>Mastery has been updated. Next: the checks below, or the next lesson.</div></div>
+  {% endif %}
+
+  <div class="toc">
+    <div class="eyebrow mb8">In this lesson</div>
+    <ol class="mb0">
+      {% for s in lesson.sections %}<li><a href="#s{{ loop.index }}">{{ s.heading }}</a></li>{% endfor %}
+      {% if lesson.checks %}<li><a href="#checks">Check yourself</a></li>{% endif %}
+      {% if lesson.connect %}<li><a href="#connect">How this connects</a></li>{% endif %}
+      {% if lesson.interview %}<li><a href="#interview">Interview questions</a></li>{% endif %}
+    </ol>
+  </div>
+
+  {% for s in lesson.sections %}
+  <div class="section" id="s{{ loop.index }}">
+    <h2>{{ s.heading }}</h2>
+    <div class="prose-block">{{ s.html | safe }}</div>
+  </div>
+  {% endfor %}
+
+  {% if lesson.checks %}
+  <div class="section" id="checks">
+    <h2>Check yourself</h2>
+    <p class="small">Multiple choice is graded exactly. Descriptive answers are graded against a curated checklist and marked as self-assessed — the score is only as honest as your ticking.</p>
+    {{ checks(lesson.checks, module.id, 'Lesson check') }}
+  </div>
+  {% endif %}
+
+  {% if lesson.connect %}
+  <div class="section" id="connect">
+    <h2>How this connects</h2>
+    <div class="dots">
+      {% for c in lesson.connect %}
+      <div class="dot-card"><b>{{ c.title }}</b>{{ c.text }}</div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if lesson.interview %}
+  <div class="section" id="interview">
+    <h2>Interview questions</h2>
+    <p class="small">Answer out loud before reading. If your version is shorter than the model answer, you have found the gap.</p>
+    {% for qa in lesson.interview %}
+    <div class="card tight">
+      <div class="flex" style="justify-content:space-between; align-items:flex-start">
+        <b>{{ qa.q }}</b>
+        <button class="btn small ghost" type="button" onclick="this.parentElement.parentElement.querySelector('.ans').classList.toggle('hidden'); this.textContent = this.textContent === 'Show answer' ? 'Hide answer' : 'Show answer'">Show answer</button>
+      </div>
+      <div class="ans hidden mt8 small" style="color:#dcdcdc">{{ qa.a }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <hr>
+  <div class="btn-row">
+    {% if prev_lesson %}<a class="btn ghost" href="/lesson/{{ prev_lesson.id }}">&larr; {{ prev_lesson.title | truncate(38) }}</a>{% endif %}
+    <button class="btn primary" id="lessonComplete" data-lesson="{{ lesson.id }}" type="button" {{ 'disabled' if state.completed }}>{{ 'Lesson completed' if state.completed else 'Mark lesson complete' }}</button>
+    {% if next_lesson %}<a class="btn" href="/lesson/{{ next_lesson.id }}">{{ next_lesson.title | truncate(38) }} &rarr;</a>
+    {% else %}<a class="btn" href="/learn/{{ module.id }}">Back to {{ module.title }} &rarr;</a>{% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/quiz.js') }}"></script>
+{% endblock %}

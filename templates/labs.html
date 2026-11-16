@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Command Labs — NetQuest{% endblock %}
+{% block crumb %}Practise / Command Labs{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap-wide">
+  <div class="split mb16">
+    <div>
+      <div class="eyebrow">{{ total }} labs &middot; {{ done }} fully practised</div>
+      <h1 class="mt0">Command Labs</h1>
+      <p class="lead mb0">Every lab has four parts: what the command is for, how it works, a simulated read-and-interpret exercise, and a real command you run on your own machine and paste the output from. The backend never executes anything.</p>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>Why paste output?</b> Reading real output is the actual skill. The grader checks your paste against curated patterns — presence of the right fields, not cosmetic formatting. Your pasted text is never stored, only the rubric result.
+  </div>
+
+  {% for g in groups %}
+  <h2>{{ g.group }}</h2>
+  <div class="grid grid-2">
+    {% for l in g.labs %}
+    {% set st = states.get(l.id, {}) %}
+    <div class="card tight">
+      <div class="split">
+        <div style="min-width:0">
+          <div class="mono" style="font-size:15px; font-weight:600">{{ l.command }}</div>
+          <div class="small muted">{{ l.tagline }}</div>
+        </div>
+        <div class="right">
+          {% if st.get('sim_done') and st.get('real_done') %}<span class="badge ok">practised</span>
+          {% elif st.get('sim_done') %}<span class="badge warn">sim only</span>
+          {% elif st.get('real_done') %}<span class="badge warn">real only</span>
+          {% else %}<span class="badge">new</span>{% endif %}
+        </div>
+      </div>
+      <div class="mt8 small muted">{{ l.problem | truncate(120) }}</div>
+      <div class="btn-row mt16">
+        <a class="btn small primary" href="/labs/{{ l.id }}">Open lab</a>
+        {% if st.get('sim_score') %}<span class="badge mono">sim {{ st.get('sim_score') }}%</span>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+
+  <div class="card tight">
+    <div class="card-title"><h3 class="mt0">How a lab is scored</h3></div>
+    <p class="small mb0">The simulated questions are graded as multiple choice. The real exercise is graded on your pasted output against expected patterns: if all the required evidence is present, the lab counts as practised. Mastery for a lab is half simulated, half real — which is why skipping the real half caps a module at 100% only in theory, and 87% in practice.</p>
+  </div>
+</div>
+{% endblock %}

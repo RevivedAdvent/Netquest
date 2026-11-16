@@ -1,0 +1,93 @@
+{
+  "id": "m6l1",
+  "module_id": "m6",
+  "title": "The filesystem hierarchy, paths and file operations",
+  "minutes": 18,
+  "summary": "Where things live on a Fedora system, how paths resolve, and the operations you type daily — with the details that matter during an incident.",
+  "sections": [
+    {
+      "heading": "FHS: where things live",
+      "html": "<table><tr><th>Path</th><th>Contents</th><th>Interview note</th></tr><tr><td><code>/etc</code></td><td>Host-specific configuration</td><td>Package defaults live in <code>/usr/share/</code> or <code>/usr/lib/</code>; never edit those</td></tr><tr><td><code>/var</code></td><td>Variable data: logs, spools, databases, caches</td><td><code>/var/log</code> growing without limit is a classic outage</td></tr><tr><td><code>/usr</code></td><td>Read-only user data: binaries, libraries, share</td><td><code>/usr/bin</code> vs <code>/usr/local/bin</code> vs <code>/bin</code> (symlink to /usr/bin on Fedora)</td></tr><tr><td><code>/home</code></td><td>User data</td><td>Often a separate mount, which is why quotas and disk-full behave per-filesystem</td></tr><tr><td><code>/tmp</code></td><td>Temporary, world-writable, often tmpfs</td><td>Cleared on reboot; never store anything you need</td></tr><tr><td><code>/run</code></td><td>Runtime state, tmpfs, recreated each boot</td><td>PID files and sockets used to live in /var/run (now a symlink)</td></tr><tr><td><code>/proc</code>, <code>/sys</code></td><td>Kernel interfaces presented as files</td><td>Tuning knobs: <code>/proc/sys/net/...</code></td></tr><tr><td><code>/opt</code></td><td>Add-on software packages</td><td>Third-party agents</td></tr></table>"
+    },
+    {
+      "heading": "Absolute versus relative, and the ones people forget",
+      "html": "<p>An absolute path starts at <code>/</code>; a relative path resolves from the current working directory. The special entries matter more than they look:</p><ul><li><code>.</code> — current directory, <code>..</code> — parent.</li><li><code>~</code> — your home; <code>~user</code> — another user's home.</li><li><code>-</code> — previous directory (<code>cd -</code>).</li><li>A leading <code>/</code> on a path inside a config file is a frequent bug: <code>log=/var/log/app.log</code> vs <code>log=var/log/app.log</code> resolves relative to the service's working directory, which for systemd is <code>/</code> but for a manual run is wherever you typed the command.</li></ul>"
+    },
+    {
+      "heading": "The operations, with the gotchas",
+      "html": "<table><tr><th>Command</th><th>Use</th><th>Gotcha</th></tr><tr><td><code>cp</code></td><td>Copy</td><td><code>-a</code> preserves mode, owner, timestamps; plain <code>cp</code> does not, which silently changes ownership on config restores</td></tr><tr><td><code>mv</code></td><td>Move/rename</td><td>Across filesystems it is copy+delete, so inode and ACLs change</td></tr><tr><td><code>rm</code></td><td>Delete</td><td>No trash, no undo; <code>rm -rf</code> on a mistyped variable is an outage. Use <code>--</code> before paths starting with -</td></tr><tr><td><code>ln -s</code></td><td>Symlink</td><td>Relative targets break when the link moves; <code>ln -sf</code> silently replaces, including replacing a directory link</td></tr><tr><td><code>find</code></td><td>Search by metadata</td><td>Traverses, so <code>-xdev</code> and pruning matter on big trees</td></tr><tr><td><code>grep -r</code></td><td>Search content</td><td>Follows symlinks only with <code>-R</code>; binary files need <code>-a</code></td></tr><tr><td><code>locate</code></td><td>Search a database</td><td>Database is periodically rebuilt; results are stale by default</td></tr><tr><td><code>tar</code></td><td>Archive</td><td><code>-C</code> changes directory before archiving — the safest way to avoid absolute paths in archives</td></tr></table><p>The two commands worth memorising as patterns:</p><pre><span class='c'># files larger than 100MB, across the whole filesystem, one filesystem only</span>find / -xdev -type f -size +100M -printf '%s\\t%p\\n' 2>/dev/null | sort -rn | head\n<span class='c'># files modified in the last 2 hours (change analysis after an incident)</span>find /etc -mmin -120 -type f\n<span class='c'># which config file actually contains this setting?</span>grep -rn --include='*.conf' 'MaxClients' /etc</pre><p>That last one is the practical way to answer 'where is this setting coming from' — far better than guessing between <code>/etc/app/app.conf</code> and a distro default in <code>/usr/lib/</code>.</p>"
+    },
+    {
+      "heading": "Hard links versus symbolic links",
+      "html": "<p>A hard link is another name for the same inode: same data, same permissions, and it survives deleting the original. A symlink is a small file containing a path, resolved at access time.</p><pre><span class='c'>$ ls -li</span>262145 -rw-r--r--. 2 root root   42 Nov 17 10:00 app.conf\n262146 lrwxrwxrwx. 1 root root   14 Nov 17 10:00 current -> releases/v2/\n262145 -rw-r--r--. 2 root root   42 Nov 17 10:00 app.conf.bak   <span class='c'># same inode, link count 2</span></pre><p>Hard links cannot cross filesystems and cannot point at directories. Symlinks can, but break when the target moves — the classic cause of a service failing to start after a 'harmless' directory rename.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m6l1-1",
+      "type": "mcq",
+      "prompt": "Which command finds files over 500MB on the root filesystem without descending into other mounts?",
+      "options": [
+        "du -sh /*",
+        "find / -xdev -type f -size +500M",
+        "locate -s 500M",
+        "find / -size +500M"
+      ],
+      "answer": 1,
+      "explanation": "-xdev stays on one filesystem; -type f restricts to files; -size +500M filters by size.",
+      "why_wrong": {
+        "3": "It descends into every mount, including slow network filesystems.",
+        "2": "locate searches names, not sizes, and is indexed.",
+        "0": "du summarises directories, it does not find files."
+      },
+      "concepts": [
+        "find"
+      ]
+    },
+    {
+      "id": "q-m6l1-2",
+      "type": "mcq",
+      "prompt": "A service starts fine manually but fails when started by systemd, complaining about a relative path. Why?",
+      "options": [
+        "SELinux blocks relative paths",
+        "systemd runs with a different working directory",
+        "systemd cannot read relative paths",
+        "The file does not exist"
+      ],
+      "answer": 1,
+      "explanation": "A manually started service inherits your shell's cwd; systemd's default WorkingDirectory is /. Relative paths therefore resolve differently.",
+      "why_wrong": {
+        "2": "Relative paths are legal, they just resolve against a different base.",
+        "3": "The file exists — it worked manually.",
+        "0": "SELinux does not distinguish relative and absolute paths."
+      },
+      "concepts": [
+        "working directory"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Permissions",
+      "text": "Every path component needs traversal permission, which is why a readable file can still be unreadable."
+    },
+    {
+      "title": "Services",
+      "text": "Working directory and User/Group in a unit file change what 'relative path' and 'my home directory' mean."
+    },
+    {
+      "title": "Case study 10",
+      "text": "The permission failure mission depends on knowing all of this."
+    }
+  ],
+  "interview": [
+    {
+      "q": "Where would you look for the configuration of an installed service?",
+      "a": "Start with /etc (and /etc/<name>/); check the unit file for EnvironmentFile and command-line options; the package defaults usually live under /usr/lib or /usr/share, which you should not edit. grep -r over /etc finds the effective file quickly."
+    },
+    {
+      "q": "What is the difference between a hard link and a symlink?",
+      "a": "A hard link is a second directory entry for the same inode — same data, no separate file, cannot cross filesystems or reference directories. A symlink is a separate file holding a path that is resolved at access time, so it can cross filesystems but breaks if the target moves."
+    }
+  ]
+}

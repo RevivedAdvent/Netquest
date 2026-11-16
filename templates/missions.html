@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Troubleshooting — NetQuest{% endblock %}
+{% block crumb %}Practise / Troubleshooting{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap-wide">
+  <div class="split mb16">
+    <div>
+      <div class="eyebrow">{{ missions | length }} case studies &middot; {{ states.values() | selectattr('status', 'equalto', 'solved') | list | length }} solved</div>
+      <h1 class="mt0">Troubleshooting Case Studies</h1>
+      <p class="lead mb0">Each case gives you symptoms and a toolbox. You collect evidence command by command, state a hypothesis, commit to a diagnosis, and then choose the fix. Partial credit comes from breadth of evidence; passing comes from the correct root cause.</p>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>How it works:</b> some evidence requires other evidence first — you cannot sensibly check a return route before you have seen the forward path fail. The grader rejects diagnoses that blame the wrong layer, and it penalises fixes that only mask the symptom.
+  </div>
+
+  {% for m in missions %}
+  {% set st = states.get(m.id, {}) %}
+  <div class="card">
+    <div class="split">
+      <div style="min-width:0">
+        <div class="flex flex-wrap mb8">
+          <span class="badge mono">case {{ '%02d' | format(m.order) }}</span>
+          <span class="badge">{{ by_module.get(m.module_id, {}).get('title', m.module_id) }}</span>
+          <span class="badge {{ 'ok' if st.get('status') == 'solved' else 'warn' if st.get('status') == 'investigating' else '' }}">{{ st.get('status', 'open') }}</span>
+          {% if st.get('score') %}<span class="badge mono">score {{ st.get('score') }}</span>{% endif %}
+        </div>
+        <h2 class="mt0 mb0" style="font-size:18px"><a href="/missions/{{ m.id }}">{{ m.title }}</a></h2>
+        <div class="small muted">{{ m.tagline }}</div>
+      </div>
+      <a class="btn small primary" href="/missions/{{ m.id }}">{{ 'Review' if st.get('status') == 'solved' else 'Investigate' }}</a>
+    </div>
+    <div class="mt8 small muted">{{ m.symptoms[0] }}</div>
+  </div>
+  {% endfor %}
+
+  <div class="card tight">
+    <div class="card-title"><h3 class="mt0">The order these are best done in</h3></div>
+    <p class="small mb0">They are numbered in a deliberate sequence: addressing, switching, DHCP/DNS, connectivity, routing, Linux, then the two capstones. Doing them out of order works, but the capstones assume you can already read the evidence the earlier cases teach you to collect.</p>
+  </div>
+</div>
+{% endblock %}

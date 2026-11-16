@@ -1,0 +1,99 @@
+{
+  "id": "m2l3",
+  "module_id": "m2",
+  "title": "VLANs, access ports, trunks and 802.1Q",
+  "minutes": 22,
+  "summary": "VLANs are how one physical switch pretends to be several. Access ports belong to one VLAN; trunk ports carry many, tagged. Get the tagging model right and most inter-VLAN confusion disappears.",
+  "sections": [
+    {
+      "heading": "Why VLANs exist",
+      "html": "<p>Before VLANs, isolating two departments meant buying two switches. VLANs let one switch run multiple independent broadcast domains:</p><ul><li><strong>Security</strong> — engineering traffic does not reach the finance segment at Layer 2.</li><li><strong>Broadcast containment</strong> — ARP storms stay in one domain.</li><li><strong>Flexibility</strong> — move a port between groups with configuration instead of cabling.</li></ul><p>The critical rule: <strong>one VLAN = one broadcast domain = one IP subnet</strong>. If you put two subnets in a VLAN, hosts will try to reach each other at Layer 2 and fail in confusing ways. If you split one subnet across two VLANs, ARP across the boundary fails.</p>"
+    },
+    {
+      "heading": "Access ports versus trunk ports",
+      "html": "<table><tr><th></th><th>Access port</th><th>Trunk port</th></tr><tr><td>Frames carried</td><td>One VLAN, untagged</td><td>Many VLANs, tagged with 802.1Q</td></tr><tr><td>Connects to</td><td>End devices (PC, printer, server NIC)</td><td>Another switch, a router, a hypervisor</td></tr><tr><td>Tag on the wire</td><td>None</td><td>4-byte 802.1Q header with VLAN ID</td></tr><tr><td>Common mistake</td><td>Wrong VLAN assigned</td><td>VLAN not allowed on the trunk, or native VLAN mismatch</td></tr></table><p>An end device is normally unaware of VLANs — it just sends untagged Ethernet frames, and the switch decides which VLAN they belong to based on the port. That is why an access port is sometimes described as 'the VLAN boundary'.</p>"
+    },
+    {
+      "heading": "The 802.1Q tag",
+      "html": "<p>A tagged frame inserts 4 bytes after the source MAC:</p><pre>dst MAC (6) | src MAC (6) | TPID 0x8100 (2) | TCI (2) | EtherType (2) | payload</pre><p>The TCI contains a 3-bit priority (802.1p), a 1-bit Drop Eligible Indicator and a 12-bit VLAN ID (0-4095, of which 1-4094 are usable).</p><p>Two practical facts:</p><ul><li>Only 4094 usable VLANs exist. Large operators use QinQ (stacked tags) to go beyond that.</li><li>Tagging adds 4 bytes, so the maximum frame on a trunk is 1522 bytes. Devices that reject longer frames on a trunk are a real, if old, interoperability bug.</li></ul>"
+    },
+    {
+      "heading": "The native VLAN trap",
+      "html": "<p>Most switches have a <em>native VLAN</em> on each trunk, usually VLAN 1. Frames in the native VLAN cross the trunk <strong>untagged</strong>; everything else is tagged. If the two ends disagree about which VLAN is native, frames silently land in the wrong broadcast domain.</p><p>This produces one of the nastiest symptoms in networking: connectivity 'mostly works', some hosts can reach some things, and nothing looks broken in the config because each switch is internally consistent. The fix is to make native VLANs match on both ends, or to avoid relying on them at all and tag every VLAN explicitly.</p><p>A second trap: a trunk left on a port where an attacker connects can receive all VLANs. That is the basis of VLAN hopping attacks, which is why access ports should have unused VLANs pruned and trunk ports should be explicitly configured, never auto-negotiated.</p>"
+    },
+    {
+      "heading": "Inter-VLAN routing",
+      "html": "<p>Two VLANs mean two subnets, so traffic between them needs Layer 3. Three classic designs:</p><table><tr><th>Design</th><th>How</th><th>Trade-off</th></tr><tr><td>Separate router interfaces</td><td>One physical interface per VLAN</td><td>Simple, wastes ports</td></tr><tr><td>Router-on-a-stick</td><td>One trunk to a router with 802.1Q subinterfaces</td><td>All inter-VLAN traffic shares one link — a bottleneck</td></tr><tr><td>L3 switch with SVIs</td><td>Switch virtual interface per VLAN, routed in hardware</td><td>Requires an L3-capable switch; fastest</td></tr></table><p>In a Linux world the equivalent of router-on-a-stick is a VLAN subinterface: <code>ip link add link eth0 name eth0.10 type vlan id 10</code> then assigning an address. The kernel then routes between <code>eth0.10</code> and <code>eth0.20</code> if forwarding is enabled — exactly the same model as a router.</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m2l3-1",
+      "type": "mcq",
+      "prompt": "Two hosts on the same switch are in VLAN 10 and VLAN 20, both with addresses in 10.0.10.0/24. What happens?",
+      "options": [
+        "They communicate normally because the subnet matches",
+        "They cannot communicate: separate VLANs are separate broadcast domains, so ARP never crosses",
+        "They communicate through the switch's default gateway",
+        "The switch merges both VLANs automatically"
+      ],
+      "answer": 1,
+      "explanation": "VLAN membership isolates Layer 2 flooding, so the ARP request for the other host never arrives. Identical subnets in two VLANs is a design error, not a working configuration.",
+      "why_wrong": {
+        "0": "A matching subnet is necessary but not sufficient; the broadcast domain must match too.",
+        "2": "Switches do not route by default and have no gateway concept.",
+        "3": "Switches never merge VLANs."
+      },
+      "concepts": [
+        "VLAN isolation",
+        "broadcast domain"
+      ]
+    },
+    {
+      "id": "q-m2l3-2",
+      "type": "mcq",
+      "prompt": "Which frames cross a trunk port tagged with an 802.1Q header?",
+      "options": [
+        "Only VLAN 1",
+        "All allowed VLANs except the native VLAN, which is usually untagged",
+        "All VLANs including the native VLAN",
+        "Only the native VLAN"
+      ],
+      "answer": 1,
+      "explanation": "The native VLAN exists specifically to carry untagged frames across a trunk; every other allowed VLAN is tagged.",
+      "why_wrong": {
+        "2": "The native VLAN is precisely the exception.",
+        "3": "A trunk carrying only the native VLAN defeats the point of trunking.",
+        "0": "VLAN 1 is usually the native VLAN by default, but not the only VLAN on a trunk."
+      },
+      "concepts": [
+        "802.1Q",
+        "native VLAN"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "DHCP",
+      "text": "A DHCP request is a broadcast, so a client in VLAN 30 cannot reach a server in VLAN 10 without a relay (ip helper) — see Module 3."
+    },
+    {
+      "title": "Routing",
+      "text": "Inter-VLAN routing is just IP routing; the SVI becomes the default gateway for that subnet."
+    },
+    {
+      "title": "Case study 7",
+      "text": "The VLAN communication failure mission is exactly this lesson with the configuration broken."
+    }
+  ],
+  "interview": [
+    {
+      "q": "What is the difference between an access port and a trunk port?",
+      "a": "An access port belongs to a single VLAN and sends untagged frames to an end device. A trunk port carries multiple VLANs between network devices, tagging frames with an 802.1Q header except for the native VLAN."
+    },
+    {
+      "q": "What is the native VLAN and why is it dangerous?",
+      "a": "It is the VLAN whose frames cross a trunk untagged. If the two ends disagree, frames silently appear in the wrong VLAN; and an attacker on an access port in the native VLAN can potentially reach it. Best practice is to match it explicitly on both ends or avoid relying on it."
+    }
+  ]
+}

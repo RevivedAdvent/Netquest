@@ -1,0 +1,113 @@
+{
+  "id": "case04",
+  "order": 4,
+  "title": "Ping works, the upload hangs",
+  "module_id": "m4",
+  "difficulty": "advanced",
+  "tagline": "Small requests succeed. Anything above about 1400 bytes silently disappears. This is the classic MTU black hole.",
+  "environment": ["Fedora client", "IPsec/GRE tunnel between two sites", "Web application reached through the tunnel", "No ICMP filtering on the tunnel device itself"],
+  "topology": "client 10.0.10.50 --[LAN 1500]--> edge --[IPsec tunnel, MTU 1400]--> remote app 10.20.0.80",
+  "symptoms": [
+    "Login page loads and small API calls return instantly",
+    "File uploads and large JSON POSTs hang until the client times out",
+    "ping to the server is clean at the default size",
+    "SSH to the server works; scp of a large file stalls partway"
+  ],
+  "objectives": [
+    "Use a size sweep with the don't-fragment bit to find the real MTU",
+    "Explain why PMTUD fails when ICMP is filtered, and how a black hole differs from packet loss",
+    "Choose a fix that does not simply lower MTU everywhere forever without understanding it"
+  ],
+  "tools": ["ping -M do -s", "tracepath", "ss -ti", "ip route get", "tcpdump"],
+  "framework": [
+    "Does the failure depend on packet size?",
+    "Where is the smallest MTU on the path?",
+    "Is the ICMP 'fragmentation needed' message getting back to the sender?"
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "label": "Confirm the failure is size-dependent",
+      "command": "curl -s -o /dev/null -w '%{http_code} %{time_total}\\n' https://10.20.0.80/small.json; curl -s -o /dev/null -w '%{http_code} %{time_total}\\n' --data-binary @5MB.bin https://10.20.0.80/upload",
+      "output": "200 0.081\n000 30.004",
+      "insight": "Small request: 200 in 81ms. Large POST: no HTTP status, 30s timeout. The difference is payload size, not authentication or availability.",
+      "requires": []
+    },
+    {
+      "id": "e2",
+      "label": "Sweep the payload size with DF set",
+      "command": "ping -M do -s 1472 -c2 10.20.0.80; ping -M do -s 1372 -c2 10.20.0.80",
+      "output": "PING 10.20.0.80 (10.20.0.80) 1472(1500) bytes of data.\n(no reply)\n\nPING 10.20.0.80 (10.20.0.80) 1372(1500) bytes of data.\n1380 bytes from 10.20.0.80: icmp_seq=1 ttl=62 time=14.1 ms\n1380 bytes from 10.20.0.80: icmp_seq=2 ttl=62 time=14.2 ms",
+      "insight": "1472+28=1500 bytes fails; 1372+28=1400 bytes passes. The path MTU is between 1400 and 1500 — the tunnel's 1400 is the constraint. Note the local total shown is still 1500, which is exactly the trap: the sender believes 1500 is fine.",
+      "requires": ["e1"]
+    },
+    {
+      "id": "e3",
+      "label": "Let tracepath discover it",
+      "command": "tracepath -n 10.20.0.80",
+      "output": " 1?: [LOCALHOST]                      pmtu 1500\n 1:  10.0.10.1               0.611ms\n 1:  10.0.10.1               0.408ms\n 2:  10.0.99.1               8.112ms pmtu 1400\n 3:  10.20.0.80              13.902ms reached\n     Resume: pmtu 1400 hops 3 back 62",
+      "insight": "tracepath reports pmtu 1400 at hop 2 — the tunnel endpoint. That is the authoritative number, discovered without guessing.",
+      "requires": ["e2"]
+    },
+    {
+      "id": "e4",
+      "label": "What the client actually sends and retries",
+      "command": "sudo tcpdump -ni eth0 host 10.20.0.80 and tcp -c 12",
+      "output": "10:20:01.100 IP 10.0.10.50.51234 > 10.20.0.80.443: Flags [S], seq 0, win 64240, length 0\n10:20:01.114 IP 10.20.0.80.443 > 10.0.10.50.51234: Flags [S.], seq 0, ack 1\n10:20:01.115 IP 10.0.10.50.51234 > 10.20.0.80.443: Flags [.], ack 1\n10:20:01.116 IP 10.0.10.50.51234 > 10.20.0.80.443: Flags [P.], seq 1:1401, length 1400\n10:20:01.117 IP 10.0.10.50.51234 > 10.20.0.80.443: Flags [.], seq 1401:2801, length 1400\n(retransmissions of the same sequence numbers, no ACK from the server)",
+      "insight": "The handshake completes (small packets). Data segments of 1400 are sent, but nothing larger. The server never ACKs them, so they are retransmitted. No ICMP fragmentation-needed appears, so PMTUD cannot correct the sender.",
+      "requires": ["e3"]
+    },
+    {
+      "id": "e5",
+      "label": "Check the sender's idea of the path MTU",
+      "command": "ip route get 10.20.0.80",
+      "output": "10.20.0.80 via 10.0.10.1 dev eth0 src 10.0.10.50 uid 1000\n    cache expires 593sec mtu 1500",
+      "insight": "The route cache still says 1500. Without a PMTUD update from ICMP, the kernel keeps building 1500-byte packets that die inside the tunnel.",
+      "requires": ["e4"]
+    },
+    {
+      "id": "e6",
+      "label": "Is the ICMP advisory being delivered?",
+      "command": "sudo tcpdump -ni eth0 icmp and host 10.0.10.1",
+      "output": "(no output)",
+      "insight": "No ICMP type 3 code 4 arriving. Either the tunnel endpoint does not generate it or a policy drops it. That absence is the defect that turns a small MTU into a black hole.",
+      "requires": ["e5"]
+    }
+  ],
+  "hypotheses": [
+    {"text": "The server is overloaded and rejects large uploads.", "verdict": "rejected", "why": "Small requests succeed in 81ms, and the TCP handshake completes; the difference correlates exactly with segment size."},
+    {"text": "The path MTU is smaller than the client's interface MTU and ICMP fragmentation-needed is not reaching the sender.", "verdict": "accepted", "why": "The DF sweep shows 1400 works and 1500 fails, tracepath reports pmtu 1400 at the tunnel hop, and the capture shows large segments retransmitted with no ICMP advisory."},
+    {"text": "There is random packet loss on the tunnel.", "verdict": "rejected", "why": "Loss would affect small packets too; the failure is deterministic and size-dependent."},
+    {"text": "TLS is misconfigured for large payloads.", "verdict": "rejected", "why": "The stall is at the TCP segment level, before any TLS record completes."}
+  ],
+  "min_evidence": 4,
+  "diagnosis_accept": ["mtu", "fragmentation", "pmtu", "black hole", "1400"],
+  "diagnosis_reject": ["packet loss", "server overload", "tls handshake", "dns", "bandwidth"],
+  "solution": {
+    "root_cause": "The IPsec tunnel reduces the usable MTU to 1400, but the client's route still assumes 1500 and the tunnel endpoint's ICMP 'fragmentation needed' message never reaches the client. Packets larger than 1400 are dropped, TCP retransmits the same oversized segments, and the transfer stalls — a PMTUD black hole.",
+    "resolution": "Restore PMTUD by allowing ICMP type 3 code 4 through the relevant policies, and/or clamp the TCP MSS at the tunnel so peers never build oversized segments (typical MSS clamp to 1360 with a 1400 MTU). If PMTUD cannot be restored, set the interface or route MTU to 1400 as a deliberate workaround. Do not lower the MTU across the whole network.",
+    "verification": "ping -M do -s 1372 succeeds and -s 1472 fails as expected from a 1400 path; the large upload completes; ss -ti shows no repeated retransmission of full-size segments; ip route get reports mtu 1400.",
+    "lessons": [
+      "Latency and failures that scale with payload size are an MTU signature, not a bandwidth problem.",
+      "PMTUD depends on ICMP getting back. Firewalls that block all ICMP break IPv4 path discovery.",
+      "The MSS clamp is the durable fix on tunnels; lowering MTU on end hosts is a per-host workaround."
+    ],
+    "interview_followups": [
+      "Why does ICMP matter for TCP performance even though TCP is reliable?",
+      "What MSS would you clamp to for a 1400-byte path?",
+      "How would you find the MTU without tracepath?"
+    ]
+  },
+  "resolution_options": [
+    {"text": "Allow ICMP type 3 code 4 through the tunnel's security policy", "correct": true, "why": "Restores PMTUD so senders learn the real path MTU automatically."},
+    {"text": "Clamp TCP MSS at the tunnel endpoint", "correct": true, "why": "Prevents peers from building segments that cannot fit, and does not depend on ICMP delivery."},
+    {"text": "Set MTU 1400 on the client interface only", "correct": false, "why": "Fixes one host and hides the systematic defect; every future client repeats the incident."},
+    {"text": "Block all ICMP for security", "correct": false, "why": "This is the cause, not the cure. Blanket ICMP blocking breaks path discovery, traceroute and error reporting."},
+    {"text": "Increase the application timeout", "correct": false, "why": "The retransmissions never succeed, so a longer timeout only delays the failure."}
+  ],
+  "interview_questions": [
+    {"q": "A user reports that small files upload fine but large ones hang. What is your first test?", "a": "A DF ping sweep: ping -M do -s with increasing sizes to find the largest size that passes. If success depends on size, you are looking at an MTU problem."},
+    {"q": "Explain a PMTUD black hole.", "a": "The sender assumes a large MTU, an intermediate link is smaller, and the ICMP message that should correct the sender is filtered. Oversized packets vanish, TCP retransmits the same too-big segment forever, and the connection appears to hang rather than fail."},
+    {"q": "Why is clamping MSS often preferred to lowering MTU?", "a": "MSS clamping is applied once at the tunnel and affects only TCP, without relying on ICMP or changing every host. It is localised, predictable and survives policy restrictions."}
+  ]
+}

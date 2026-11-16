@@ -1,0 +1,95 @@
+{
+  "id": "m1l2",
+  "module_id": "m1",
+  "title": "Same subnet or different subnet?",
+  "minutes": 16,
+  "summary": "Every packet starts with one decision: local or remote. This lesson traces that decision end to end and shows the two very different failure signatures it produces.",
+  "sections": [
+    {
+      "heading": "Two paths out of the host",
+      "html": "<p>Once the kernel knows the destination IP, it consults the routing table. There are really only two outcomes that matter for a directly attached host:</p><div class='dots'><div class='dot-card'><b>On-link</b>The destination matches a <code>proto kernel scope link</code> route. The host needs the destination's own link-layer address, so it sends an ARP request (IPv4) or an NDP neighbour solicitation (IPv6) for the <em>destination IP</em>.</div><div class='dot-card'><b>Off-link</b>The destination matches a route with a <code>via</code> next hop, usually the default gateway. The host needs the <em>gateway's</em> link-layer address. The destination IP inside the packet never changes.</div></div><p>Notice what does <em>not</em> change: the destination IP. A frame is rewritten at every hop, but the IP packet survives end to end (ignoring NAT). Interviewers use this to separate people who understand encapsulation from people who repeat 'the router changes the IP'.</p>"
+    },
+    {
+      "heading": "A concrete trace",
+      "html": "<p>Host <code>10.20.30.44/24</code>, gateway <code>10.20.30.1</code>, destination <code>10.20.31.7</code>:</p><pre><span class='c'># 1. routing lookup</span>10.20.31.7 -&gt; not in 10.20.30.0/24 -&gt; matches default 0.0.0.0/0 via 10.20.30.1<span class='c'># 2. neighbour resolution for the NEXT HOP</span>ARP: who-has 10.20.30.1 tell 10.20.30.44       <span class='g'>-&gt; 10.20.30.1 is-at 52:54:00:aa:bb:01</span><span class='c'># 3. frame on the wire</span>src MAC = host NIC      dst MAC = 52:54:00:aa:bb:01src IP  = 10.20.30.44    dst IP  = 10.20.31.7      TTL 64</pre><p>The same host reaching <code>10.20.30.99</code> instead:</p><pre>10.20.30.99 -&gt; inside 10.20.30.0/24 -&gt; on-linkARP: who-has 10.20.30.99 tell 10.20.30.44      <span class='g'>-&gt; 10.20.30.99 is-at 52:54:00:cc:dd:02</span>src MAC = host NIC      dst MAC = 52:54:00:cc:dd:02src IP  = 10.20.30.44    dst IP  = 10.20.30.99</pre>"
+    },
+    {
+      "heading": "The two failure signatures",
+      "html": "<table><tr><th>Broken thing</th><th>Symptom</th><th>Evidence on Linux</th></tr><tr><td>Mask too wide</td><td>Some remote destinations fail, others work; the gateway itself pings fine</td><td><code>ip route</code> shows an unexpectedly large on-link prefix; <code>ip neigh</code> shows <code>FAILED</code>/<code>INCOMPLETE</code> for offline addresses</td></tr><tr><td>Gateway wrong / unreachable</td><td>Everything off-link fails, everything on-link works</td><td><code>ip neigh</code> cannot resolve the gateway; <code>ip route get 8.8.8.8</code> points at the wrong next hop</td></tr><tr><td>Gateway itself down</td><td>All off-link fails, including the gateway's own IP</td><td>ARP for gateway fails; ping to gateway fails</td></tr><tr><td>Local link down</td><td>Nothing works, not even on-link</td><td><code>ip link</code> shows <code>NO-CARRIER</code>/<code>DOWN</code>; <code>ip addr</code> has no address</td></tr></table><p>Learn these four signatures and a large fraction of case studies in this application become quick to read. Notice that none of them are DNS problems, even though users will describe them as 'the internet is down'.</p>"
+    },
+    {
+      "heading": "Where ARP fits in IP addressing",
+      "html": "<p>ARP is not a separate concern bolted on later; it is the bridge between the IP addressing plan and the Ethernet segment. Its scope is always the local broadcast domain, which is exactly why the mask matters. Three properties worth stating explicitly in an interview:</p><ul><li>ARP resolves an <em>IPv4 address to a MAC</em> on the same link, nothing more.</li><li>ARP requests are broadcast, replies are unicast, and results are cached in the neighbour table for a while (<code>base_reachable_time</code>).</li><li>A host may answer ARP for any address it owns on that interface, and Linux defaults favour the <em>weak host model</em> — that is why ARP-based troubleshooting surprises people.</li></ul>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m1l2-1",
+      "type": "mcq",
+      "prompt": "A host with 172.16.4.10/22 sends a packet to 172.16.7.20. What happens?",
+      "options": [
+        "The switch routes it because both hosts are on the same VLAN",
+        "The host cannot decide and sends to both",
+        "It is off-link, so the packet goes to the default gateway",
+        "It is on-link, so the host ARPs for 172.16.7.20 directly"
+      ],
+      "answer": 3,
+      "explanation": "/22 covers 172.16.4.0 - 172.16.7.255. 172.16.7.20 is inside that range, so it is on-link and the host resolves 172.16.7.20's MAC directly.",
+      "why_wrong": {
+        "2": "You treated /22 as /24. With a /22 the address space spans four /24 blocks.",
+        "1": "There is no ambiguous case — the AND comparison is exact.",
+        "0": "Layer 2 switches do not route, and 'same VLAN' is not the same test as 'same subnet' (though they usually match)."
+      },
+      "concepts": [
+        "on-link decision",
+        "CIDR"
+      ]
+    },
+    {
+      "id": "q-m1l2-2",
+      "type": "mcq",
+      "prompt": "Which command shows exactly which next hop the kernel will use for a destination, without sending traffic?",
+      "options": [
+        "ip route get <destination>",
+        "ss -tn dst <destination>",
+        "ping -R <destination>",
+        "traceroute <destination>"
+      ],
+      "answer": 0,
+      "explanation": "ip route get performs the lookup the kernel would perform and prints the chosen route, source address and interface. It sends nothing.",
+      "why_wrong": {
+        "2": "ping -R records routes in the IP header, but it still sends packets and often does not work.",
+        "3": "traceroute sends probe packets toward the destination.",
+        "1": "ss shows sockets, not route selection."
+      },
+      "concepts": [
+        "routing lookup",
+        "ip route"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "ARP / NDP",
+      "text": "The gateway decision produces an ARP request. A failed gateway decision looks like an ARP problem."
+    },
+    {
+      "title": "Routing",
+      "text": "The 'same subnet' test and the routing table are the same machinery: connected routes are generated from the interface prefixes."
+    },
+    {
+      "title": "Troubleshooting",
+      "text": "ip route + ip neigh answer 'is the problem local or upstream?' before you touch ping or DNS."
+    }
+  ],
+  "interview": [
+    {
+      "q": "A host can reach its own subnet but nothing else. What are your first three commands and why?",
+      "a": "ip link (is the interface up with carrier), ip addr (is the address and mask sensible), ip route (is there a default route and is it plausible). Then ip neigh / ping the gateway to separate 'no route' from 'gateway unreachable'."
+    },
+    {
+      "q": "Why can a host with a correct IP and correct gateway still fail to reach the internet?",
+      "a": "Because the mask is part of the configuration. A wrong mask makes the host treat remote destinations as on-link, so it ARPs instead of routing. Also possible: missing NAT, firewall, upstream routing, or a gateway that has no path onward."
+    }
+  ]
+}

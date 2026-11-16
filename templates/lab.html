@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}{{ lab.command }} — Command Lab{% endblock %}
+{% block crumb %}Practise / <a href="/labs">Command Labs</a> / {{ lab.command }}{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap-wide">
+  <div class="eyebrow">{{ lab.group }}{% if module %} &middot; <a href="/learn/{{ module.id }}">{{ module.title }}</a>{% endif %}</div>
+  <h1 class="mt0"><span class="mono">{{ lab.command }}</span></h1>
+  <p class="lead">{{ lab.tagline }}</p>
+
+  <div class="pill-row mb16">
+    {% if state.get('sim_done') %}<span class="badge ok">simulate passed</span>{% endif %}
+    {% if state.get('real_done') %}<span class="badge ok">real output verified</span>{% endif %}
+    {% if state.get('sim_score') %}<span class="badge mono">sim {{ state.get('sim_score') }}%</span>{% endif %}
+    <span class="badge mono">{{ lab.syntax }}</span>
+  </div>
+
+  <div class="tabs" data-tabs>
+    <button class="tab active" data-tab="learn">Learn</button>
+    <button class="tab" data-tab="simulate">Simulate</button>
+    <button class="tab" data-tab="real">Try it for real</button>
+  </div>
+
+  <div class="tabpane active" data-pane="learn">
+    <div class="grid grid-hero">
+      <div>
+        <div class="card">
+          <div class="card-title"><h3 class="mt0">The problem this solves</h3></div>
+          <p>{{ lab.problem }}</p>
+          <h4>How it works</h4>
+          <p class="mb0">{{ lab.how }}</p>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><h3 class="mt0">Flags worth knowing</h3></div>
+          <table>
+            <tr><th class="mono">flag</th><th>why</th></tr>
+            {% for f in lab.flags %}
+            <tr><td class="mono">{{ f.flag }}</td><td class="muted">{{ f.why }}</td></tr>
+            {% endfor %}
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><h3 class="mt0">Examples</h3></div>
+          {% for ex in lab.examples %}
+          <div class="codeblock"><pre><code>{{ ex.cmd }}</code></div>
+          <div class="small muted" style="margin-top:-8px; margin-bottom:12px">{{ ex.note }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="card">
+          <div class="card-title"><h3 class="mt0">Sample output</h3></div>
+          <div class="terminal">{{ lab.sample }}</div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card tight">
+          <div class="card-title"><h3 class="mt0">How to read it</h3></div>
+          <ul class="small mb0">
+            {% for r in lab.read %}<li style="margin-bottom:9px">{{ r }}</li>{% endfor %}
+          </ul>
+        </div>
+
+        <div class="card tight">
+          <div class="card-title"><h3 class="mt0">Common mistakes</h3></div>
+          <ul class="small mb0">
+            {% for m in lab.mistakes %}<li style="margin-bottom:9px">{{ m }}</li>{% endfor %}
+          </ul>
+        </div>
+
+        <div class="card tight">
+          <div class="card-title"><h3 class="mt0">When to reach for it</h3></div>
+          <p class="small">{{ lab.when }}</p>
+          <div class="pill-row">
+            {% for f in lab.followups %}<span class="badge mono">{{ f }}</span>{% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabpane" data-pane="simulate">
+    <div class="grid grid-hero">
+      <div>
+        <div class="card">
+          <div class="card-title"><h3 class="mt0">Read this output</h3></div>
+          <p class="small">{{ lab.simulate.intro }}</p>
+          <div class="terminal">{{ lab.simulate.terminal }}</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><h3 class="mt0">Questions</h3></div>
+          <div id="labSim">
+            {% for q in lab.simulate.questions %}
+            <div class="check-block" data-qid="{{ q.id }}">
+              <div class="qhead"><span class="small">Question {{ loop.index }} of {{ lab.simulate.questions | length }}</span></div>
+              <div class="qtext">{{ q.prompt }}</div>
+              {% for opt in q.options %}
+              <label class="option"><input type="radio" name="{{ q.id }}" value="{{ loop.index0 }}"><span>{{ opt }}</span></label>
+              {% endfor %}
+            </div>
+            {% endfor %}
+            <div class="btn-row mt16">
+              <button class="btn primary" id="labSimSubmit" type="button">Submit simulated answers</button>
+            </div>
+            <div id="labSimResult" class="mt16"></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="card tight">
+          <div class="card-title"><h3 class="mt0">Why this matters</h3></div>
+          <p class="small mb0">In an interview and on the job, the command is the easy part. The skill is looking at this output and saying what it means, and what you would check next. Get 80% here and the lab counts as simulated.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabpane" data-pane="real">
+    <div class="grid grid-hero">
+      <div>
+        <div class="card">
+          <div class="card-title"><h3 class="mt0">Run it yourself</h3><span class="badge warn">real machine</span></div>
+          <p class="small">{{ lab.try.scenario }}</p>
+          <p><b>{{ lab.try.task }}</b></p>
+          <div class="codeblock"><pre><code>{{ lab.try.command }}</code></div>
+          <div class="note mb0">NetQuest never runs this. You run it, read the output, and paste the relevant lines below. Nothing you paste is stored — only the pattern-match result.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><h3 class="mt0">Paste your output</h3></div>
+          <textarea id="pasteBox" placeholder="Paste the terminal output here (the relevant lines, not the whole screen)…"></textarea>
+          <div class="btn-row mt8">
+            <button class="btn primary" id="pasteSubmit" type="button">Check my output</button>
+            <span class="small muted">Graded against {{ lab.try.expected_patterns | length }} expected patterns</span>
+          </div>
+          <div id="pasteResult" class="mt16"></div>
+        </div>
+      </div>
+      <div>
+        <div class="card tight">
+          <div class="card-title"><h3 class="mt0">What the grader looks for</h3></div>
+          <ul class="small mb0">
+            {% for p in lab.try.expected_patterns %}<li>{{ p.label }}</li>{% endfor %}
+          </ul>
+        </div>
+        {% if related %}
+        <div class="card tight">
+          <div class="card-title"><h3 class="mt0">Same group</h3></div>
+          <div class="pill-row">
+            {% for r in related %}<a class="btn small ghost mono" href="/labs/{{ r.id }}">{{ r.command }}</a>{% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+  var LAB = "{{ lab.id }}";
+
+  function renderSim(data) {
+    var html = '<div class="feedback ' + (data.summary.percent >= 80 ? "ok" : "bad") + '">' +
+      "<h4>" + data.summary.percent + "% (" + data.summary.score + "/" + data.summary.max_score + ")</h4><div>" +
+      (data.summary.percent >= 80
+        ? "Simulated part passed. Now do the real half — reading your own machine's output is the transferable skill."
+        : "Below 80%. Re-read the sample output above, then answer again.") +
+      "</div></div>";
+    data.results.forEach(function (r, i) {
+      html += '<div class="feedback ' + (r.correct ? "ok" : "bad") + '"><h4>Q' + (i + 1) + ": " +
+        (r.correct ? "correct" : "not quite") + "</h4><div>" + NetQuest.escape(r.feedback) + "</div></div>";
+    });
+    document.getElementById("labSimResult").innerHTML = html;
+  }
+
+  document.getElementById("labSimSubmit").addEventListener("click", function () {
+    var answers = {};
+    document.querySelectorAll("#labSim .check-block").forEach(function (b) {
+      var qid = b.getAttribute("data-qid");
+      answers[qid] = -1;
+      b.querySelectorAll("input[type=radio]").forEach(function (n) { if (n.checked) answers[qid] = +n.value; });
+    });
+    NetQuest.post("/api/lab/" + LAB + "/simulate", { answers: answers })
+      .then(renderSim)
+      .catch(function (e) { NetQuest.toast(e.message); });
+  });
+
+  document.getElementById("pasteSubmit").addEventListener("click", function () {
+    var text = document.getElementById("pasteBox").value;
+    if (!text.trim()) { NetQuest.toast("Paste some output first"); return; }
+    NetQuest.post("/api/lab/" + LAB + "/paste", { text: text })
+      .then(function (data) {
+        var a = data.assessment;
+        var html = '<div class="feedback ' + (a.complete ? "ok" : "bad") + '">' +
+          "<h4>" + a.percent + "% of expected evidence found</h4><div>" +
+          NetQuest.escape(a.verdict) + "</div></div>";
+        html += '<div class="card tight mt8"><div class="card-title"><h4 class="mt0">Checklist</h4></div>';
+        a.found.forEach(function (f) {
+          html += '<div class="small" style="color:#e8e8e8">&#10003; ' + NetQuest.escape(f) + "</div>";
+        });
+        (a.missing || []).forEach(function (m) {
+          html += '<div class="small muted">&#10007; ' + NetQuest.escape(m) + "</div>";
+        });
+        html += "</div>";
+        document.getElementById("pasteResult").innerHTML = html;
+      })
+      .catch(function (e) { NetQuest.toast(e.message); });
+  });
+})();
+</script>
+{% endblock %}

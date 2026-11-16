@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ code }} — NetQuest{% endblock %}
+{% block crumb %}Error {{ code }}{% endblock %}
+{% block mastery_pct %}—{% endblock %}
+
+{% block content %}
+<div class="wrap center" style="padding-top:40px">
+  <div class="mono" style="font-size:64px; color:#e8e8e8; line-height:1">{{ code }}</div>
+  <h1 class="mt0 mt8">{{ message or 'Something went wrong' }}</h1>
+  <p class="muted" style="max-width:520px; margin:0 auto 24px">
+    {% if code == 404 %}
+    That page is not part of the curriculum. The sidebar lists everything that exists.
+    {% else %}
+    The app hit an internal error. Because everything is local, the traceback is in the terminal where you started it — check there first.
+    {% endif %}
+  </p>
+  <div class="btn-row" style="justify-content:center">
+    <a class="btn primary" href="/">Dashboard</a>
+    <a class="btn ghost" href="/learn">Curriculum</a>
+    <a class="btn ghost" href="/labs">Command labs</a>
+  </div>
+</div>
+{% endblock %}

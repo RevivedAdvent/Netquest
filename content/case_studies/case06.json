@@ -1,0 +1,113 @@
+{
+  "id": "case06",
+  "order": 6,
+  "title": "Works on the server, not from the LAN",
+  "module_id": "m4",
+  "difficulty": "core",
+  "tagline": "curl localhost:8080 returns the page. The same request from a colleague's laptop times out. The service is listening on the wrong interface.",
+  "environment": ["Fedora application server", "Service started manually during deployment", "Browser client on the same VLAN", "No host firewall change in the last 30 days"],
+  "topology": "browser 10.0.10.50 --> server 10.0.10.20:8080 (service listening somewhere)",
+  "symptoms": [
+    "curl http://127.0.0.1:8080/ on the server returns 200",
+    "From another host, the browser spins and eventually times out (not 'connection refused')",
+    "The service log shows no incoming request from the client",
+    "The service has been 'running fine' according to the developer"
+  ],
+  "objectives": [
+    "Distinguish a listen-socket problem from a firewall problem using connection behaviour",
+    "Read ss output, including the local address column",
+    "Know when a timeout means 'nothing listening here' versus 'refused'"
+  ],
+  "tools": ["ss -lntp", "curl -v", "ip addr", "tcpdump", "firewall-cmd --list-all", "systemctl cat"],
+  "framework": [
+    "Does the socket exist, and on which address?",
+    "Does a locally originated connection on the external IP succeed?",
+    "Does the SYN reach the server at all?"
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "label": "Which sockets are listening",
+      "command": "ss -lntp",
+      "output": "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process\nLISTEN 0      128        127.0.0.1:8080       0.0.0.0:*     users:((\"java\",pid=4242,fd=18))\nLISTEN 0      128          0.0.0.0:22         0.0.0.0:*     users:((\"sshd\",pid=901,fd=3))",
+      "insight": "8080 is bound to 127.0.0.1 only, so the kernel will never accept a connection to 10.0.10.20:8080. SSH is bound to 0.0.0.0, which is why that works from everywhere.",
+      "requires": []
+    },
+    {
+      "id": "e2",
+      "label": "Reproduce from the server using its LAN address",
+      "command": "curl -s -o /dev/null -w '%{http_code}\\n' --max-time 3 http://10.0.10.20:8080/; echo exit=$?",
+      "output": "000\nexit=28",
+      "insight": "Even locally, connecting to the external address fails — proving this is not a network or firewall issue between hosts. Exit 28 is a timeout, not a refusal.",
+      "requires": ["e1"]
+    },
+    {
+      "id": "e3",
+      "label": "What a firewall refusal would look like",
+      "command": "sudo firewall-cmd --list-all",
+      "output": "public (active)\n  target: default\n  interfaces: eth0\n  services: ssh dhcpv6-client\n  ports:\n  masquerade: no",
+      "insight": "firewalld is running and does not allow 8080. That is a second, independent problem: even after the bind address is fixed, the port must be opened. But the empty ports list does not explain a timeout to a local address.",
+      "requires": ["e2"]
+    },
+    {
+      "id": "e4",
+      "label": "Does the SYN reach the host?",
+      "command": "sudo tcpdump -ni eth0 tcp port 8080 -c 5",
+      "output": "10:41:02.001 IP 10.0.10.50.51022 > 10.0.10.20.8080: Flags [S], seq 0, win 64240\n10:41:03.002 IP 10.0.10.50.51022 > 10.0.10.20.8080: Flags [S], seq 0, win 64240\n10:41:04.004 IP 10.0.10.50.51022 > 10.0.10.20.8080: Flags [S], seq 0, win 64240",
+      "insight": "The SYNs arrive. Nothing replies, not even a reset. That rules out 'wrong IP' and 'no route' and confirms the packet reaches the host but no socket accepts it.",
+      "requires": ["e2"]
+    },
+    {
+      "id": "e5",
+      "label": "Transport behaviour of a real refusal",
+      "command": "curl -s -o /dev/null -w '%{http_code}\\n' --max-time 5 http://10.0.10.20:9999/",
+      "output": "000",
+      "insight": "Note both cases give 000 from curl, but the timing differs: a refused connection returns in milliseconds, a filtered or unbound one waits for the timeout. The wall-clock duration is evidence.",
+      "requires": ["e4"]
+    },
+    {
+      "id": "e6",
+      "label": "Confirm the bind is in configuration, not a fluke",
+      "command": "systemctl cat myapp | grep -i 'ExecStart'; grep -i 'server.address\\|bind' /etc/myapp/app.conf",
+      "output": "ExecStart=/usr/bin/java -jar /opt/myapp/app.jar --config /etc/myapp/app.conf\nserver.address=127.0.0.1\nserver.port=8080",
+      "insight": "The listen address is explicitly 127.0.0.1 in the config, so a restart will reproduce the same state until that line changes.",
+      "requires": ["e5"]
+    }
+  ],
+  "hypotheses": [
+    {"text": "The firewall is dropping traffic to port 8080.", "verdict": "rejected", "why": "The SYNs arrive at the server and a connection from the server itself to its own LAN address also fails, so the block is before any firewall rule."},
+    {"text": "The service is bound to the loopback address only.", "verdict": "accepted", "why": "ss shows 127.0.0.1:8080, the config sets server.address=127.0.0.1, and connection attempts to 10.0.10.20:8080 time out locally and remotely."},
+    {"text": "There is no route from the client to the server.", "verdict": "rejected", "why": "SYNs are visible at the server's interface."},
+    {"text": "The application is crashing on start.", "verdict": "rejected", "why": "The process exists, is listening, and answers on loopback."}
+  ],
+  "min_evidence": 3,
+  "diagnosis_accept": ["127.0.0.1", "loopback", "localhost", "bound to", "listen address", "bind address"],
+  "diagnosis_reject": ["firewall is blocking", "no route", "dns", "the service is down", "packet loss"],
+  "solution": {
+    "root_cause": "The application is configured to listen on 127.0.0.1 (server.address=127.0.0.1) for safety during development. A loopback-only listener is invisible to the network: the kernel receives the SYN on eth0 but has no matching socket, so the connection hangs rather than being refused. A second, latent problem exists: firewalld does not yet permit TCP 8080.",
+    "resolution": "Change the listen address to 0.0.0.0 (or the specific LAN address) and restart the service, then permanently open the port with firewall-cmd --permanent --add-port=8080/tcp && firewall-cmd --reload. If the service must stay on loopback, put a reverse proxy on the LAN address in front of it instead.",
+    "verification": "ss -lntp shows 0.0.0.0:8080 or 10.0.10.20:8080; curl from the server's LAN IP returns 200; curl from the colleague's machine returns 200 with the request visible in the service log; firewall-cmd --list-all lists the port.",
+    "lessons": [
+      "localhost is not an address, it is a choice of interface. 'Works locally' narrows the problem to the listen socket or the firewall, in that order.",
+      "A timeout and a refusal are different evidence. Timeouts suggest a listener or filter problem; refusals usually mean a firewall REJECT or nothing on that port with no filter.",
+      "Two independent defects can exist. Fixing the bind without opening the port produces a second incident."
+    ],
+    "interview_followups": [
+      "How do you tell a firewall DROP from a firewall REJECT from the client side?",
+      "What is the difference between binding 0.0.0.0 and binding a specific interface address?",
+      "Where do you look for the listen address of a service you have never seen before?"
+    ]
+  },
+  "resolution_options": [
+    {"text": "Change the listen address to 0.0.0.0 and restart the service", "correct": true, "why": "Makes the socket reachable on the LAN interface, which is what the request needs."},
+    {"text": "Open TCP 8080 in firewalld", "correct": true, "why": "Required as well: without it the connection will be filtered after the bind is corrected."},
+    {"text": "Add a reverse proxy bound to the LAN address in front of the loopback service", "correct": true, "why": "Also correct, and often preferable when the application should not face the network directly."},
+    {"text": "Ask users to use an SSH tunnel", "correct": false, "why": "A workaround for one user, not a service fix, and it hides the misconfiguration."},
+    {"text": "Disable firewalld", "correct": false, "why": "Removes all protection to solve one port; the loopback bind would still block the connection."}
+  ],
+  "interview_questions": [
+    {"q": "You see SYNs arriving but no SYN-ACK. What are the possible causes?", "a": "Nothing listening on that address:port, a DROP rule in the host firewall, or the reply being filtered on the way back. The local curl to the same address separates the first two from the third."},
+    {"q": "How do you determine which address a process is listening on?", "a": "ss -lntp and read the Local Address column; 127.0.0.1 is loopback-only, 0.0.0.0 is all IPv4 interfaces, and [::] is all IPv6. Then confirm with the service's own configuration, because a config change needs a restart to take effect."},
+    {"q": "Why is a timeout worse than a refusal for diagnosis?", "a": "A refusal is immediate and explicit: the host actively said no. A timeout is silence, so it can be a missing listener, a filter, a blackhole route or a broken return path — you need packet-level evidence to tell which."}
+  ]
+}

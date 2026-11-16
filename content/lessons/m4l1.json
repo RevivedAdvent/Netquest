@@ -1,0 +1,94 @@
+{
+  "id": "m4l1",
+  "module_id": "m4",
+  "title": "ICMP, ping, TTL and latency",
+  "minutes": 18,
+  "summary": "Ping is the most over-trusted command in networking. This lesson explains exactly what it sends, what comes back, and the three ways it lies to you.",
+  "sections": [
+    {
+      "heading": "What ICMP is",
+      "html": "<p>ICMP (Internet Control Message Protocol) is a companion protocol to IP, not a transport protocol: it has no ports and carries error and informational messages. Its type/code pairs matter:</p><table><tr><th>Type</th><th>Message</th><th>Where you see it</th></tr><tr><td>0 / 8</td><td>Echo reply / echo request</td><td>ping</td></tr><tr><td>3</td><td>Destination unreachable (codes: net, host, port, frag needed)</td><td>'No route to host', PMTU discovery</td></tr><tr><td>11</td><td>Time exceeded (code 0 = TTL expired)</td><td>traceroute</td></tr><tr><td>5</td><td>Redirect</td><td>Router telling a host about a better gateway</td></tr></table><p>ICMP code 3 subcode 4 (fragmentation needed, DF set) is how path MTU discovery works. A firewall that blocks all ICMP breaks PMTU discovery, producing the classic 'ping and small transfers work, large transfers hang'.</p>"
+    },
+    {
+      "heading": "Reading ping output properly",
+      "html": "<pre><span class='c'>$ ping -c 4 fedoraproject.org</span>PING fedoraproject.org (152.19.134.198) 56(84) bytes of data.\n64 bytes from 152.19.134.198: icmp_seq=1 ttl=54 time=18.4 ms\n64 bytes from 152.19.134.198: icmp_seq=2 ttl=54 time=18.9 ms\n64 bytes from 152.19.134.198: icmp_seq=3 ttl=54 time=18.1 ms\n64 bytes from 152.19.134.198: icmp_seq=4 ttl=54 time=18.6 ms\n\n--- fedoraproject.org ping statistics ---\n4 packets transmitted, 4 received, 0% packet loss, time 3003ms\nrtt min/avg/max/mdev = 18.118/18.500/18.911/0.294 ms</pre><ul><li><strong>ttl=54</strong> — the reply's TTL after decrementing at each hop. If the sender started at 64, that implies ~10 hops. It is a hint about distance, not a measurement; you cannot know the initial TTL reliably.</li><li><strong>time</strong> — the round trip. <code>mdev</code> (jitter) is often more diagnostic than the average: 18ms with 0.3ms jitter is a healthy path; 18ms with 15ms jitter suggests congestion or wireless.</li><li><strong>0% packet loss</strong> — for ICMP echo. ICMP may be treated differently from the traffic you actually care about.</li><li>The first line shows the <em>resolved</em> address, which silently proves DNS worked.</li></ul>"
+    },
+    {
+      "heading": "Three ways ping misleads you",
+      "html": "<ol class='steps'><li><b>Ping failure ≠ host down.</b> ICMP echo may be filtered by a firewall, disabled (<code>net.ipv4.icmp_echo_ignore_all</code>), or rate limited on the path. Always test the actual service port before concluding anything.</li><li><b>Ping success ≠ service up.</b> A host can answer ICMP while every application is dead. Reachability is not availability.</li><li><b>Ping success ≠ the path your traffic takes.</b> ICMP may be treated differently (QoS) than TCP, and asymmetric routing means the return path may differ from the forward path — a one-way failure can still show 0% loss in one direction.</li></ol>"
+    },
+    {
+      "heading": "Useful variants and what they prove",
+      "html": "<pre>ping -c 1 -W 2 10.0.0.1        <span class='c'># single quick probe, 2s timeout</span>ping -s 1472 -M do 10.0.0.1   <span class='c'># PMTU test: 1472+28 = 1500 bytes, don't fragment</span>ping -I eth1 10.0.0.1         <span class='c'># bind to an interface/source address</span>ping -6 2001:db8::1           <span class='c'># IPv6 (uses ICMPv6 echo)</span>arping -D -I eth0 10.0.0.7    <span class='c'># duplicate-address detection, no reply needed</span></pre><p>The <code>-s 1472 -M do</code> test is a genuine interview favourite: it distinguishes an MTU problem from a generic 'big transfers fail' mystery. If small pings work and 1472-with-DF fails with 'message too long', the path MTU is under 1500 somewhere (common with tunnels and VPNs).</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m4l1-1",
+      "type": "mcq",
+      "prompt": "A user reports 'the server is down' because ping fails. What do you do first?",
+      "options": [
+        "Replace the network cable",
+        "Test the actual service port and check whether ICMP is likely filtered",
+        "Restart the firewall on the client",
+        "Reboot the server"
+      ],
+      "answer": 1,
+      "explanation": "Ping failure is weak evidence. Testing the service port (and the path) determines whether anything is actually wrong.",
+      "why_wrong": {
+        "3": "Destructive action without evidence.",
+        "2": "No evidence points at the client's firewall.",
+        "0": "The user has some connectivity; a dead cable would fail everything."
+      },
+      "concepts": [
+        "ICMP limitations"
+      ]
+    },
+    {
+      "id": "q-m4l1-2",
+      "type": "mcq",
+      "prompt": "What does `ping -s 1472 -M do host` test?",
+      "options": [
+        "Latency under load",
+        "Whether a 1500-byte unfragmented packet can traverse the path (MTU/PMTU)",
+        "Whether the host is rate limiting ICMP",
+        "Whether the host supports IPv6"
+      ],
+      "answer": 1,
+      "explanation": "1472 bytes of payload + 28 bytes of IP/ICMP headers = 1500. With DF set, a smaller path MTU fails with 'message too long' or an ICMP frag-needed error.",
+      "why_wrong": {
+        "0": "That needs a load generator, not a single large ping.",
+        "3": "IPv6 is tested with -6.",
+        "2": "Rate limiting shows as loss or delays, not a size-dependent failure."
+      },
+      "concepts": [
+        "PMTU",
+        "MTU"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Routing",
+      "text": "The TTL in a reply is the only free hint about path length before you run traceroute."
+    },
+    {
+      "title": "Firewalls",
+      "text": "ICMP filtering is a policy decision with real diagnostic costs — PMTU especially."
+    },
+    {
+      "title": "Case study 6",
+      "text": "Intermittent packet loss is diagnosed with ping, MTR and jitter analysis."
+    }
+  ],
+  "interview": [
+    {
+      "q": "Can you conclude a host is down if ping fails?",
+      "a": "No. ICMP may be filtered, rate limited or disabled, and ICMP is often treated differently from TCP. Test the actual service port and check corroborating evidence such as ARP resolution, trace behaviour and monitoring data."
+    },
+    {
+      "q": "What is the role of TTL?",
+      "a": "It bounds packet lifetime to prevent infinite loops: each router decrements it and drops the packet with ICMP time-exceeded at zero. The reply's TTL also hints at hop count, and traceroute exploits the decrement-to-zero behaviour."
+    }
+  ]
+}

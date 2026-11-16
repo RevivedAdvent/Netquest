@@ -1,0 +1,158 @@
+{
+  "id": "m3l1",
+  "module_id": "m3",
+  "title": "DHCP: why it exists and the DORA exchange in full",
+  "minutes": 26,
+  "summary": "Every field of every DHCP message, who sends it, who receives it, and why each of the four messages is necessary.",
+  "sections": [
+    {
+      "heading": "The problem DHCP solves",
+      "html": "<p>A host needs five things before it can use a network: an IP address, a subnet mask, a default gateway, at least one DNS resolver, and usually a domain/search suffix. Manual configuration does not scale:</p><ul><li>Every change (new DNS server, gateway move) becomes a manual visit to every host.</li><li>Addresses drift and get duplicated.</li><li>Laptops move between networks and cannot be reconfigured per network.</li><li>There is no central record of who has which address.</li></ul><p>DHCP (RFC 2131) solves this with a four-message exchange. It runs over <strong>UDP</strong>: client port 68, server port 67. Broadcast on the local segment for the first messages because the client does not yet have an address — it cannot be addressed directly.</p>"
+    },
+    {
+      "heading": "DORA, message by message",
+      "html": "<table><tr><th>Step</th><th>Message</th><th>From -> To</th><th>Src IP : port</th><th>Dst IP : port</th><th>L2</th></tr><tr><td>1</td><td>DHCPDISCOVER</td><td>Client -> any server</td><td class='mono'>0.0.0.0:68</td><td class='mono'>255.255.255.255:67</td><td>Broadcast</td></tr><tr><td>2</td><td>DHCPOFFER</td><td>Server -> client</td><td class='mono'>server IP:67</td><td class='mono'>offered IP:68</td><td>Usually unicast</td></tr><tr><td>3</td><td>DHCPREQUEST</td><td>Client -> all servers</td><td class='mono'>0.0.0.0:68</td><td class='mono'>255.255.255.255:67</td><td>Broadcast</td></tr><tr><td>4</td><td>DHCPACK</td><td>Server -> client</td><td class='mono'>server IP:67</td><td class='mono'>leased IP:68</td><td>Usually unicast</td></tr></table><p>The details that interviewers probe:</p><ul><li><strong>Why is REQUEST broadcast?</strong> Those <code>chaddr</code>/client identifier fields tell other servers their offer was declined, and that they may return the address to the pool. Some implementations unicast the REQUEST once they know the server identifier — both exist in the wild; the server must accept both.</li><li><strong>How does the server unicast to a client with no IP?</strong> It uses the client's MAC in the Ethernet header, or sets the broadcast flag and broadcasts. Off-subnet servers need a relay agent.</li><li><strong>Why four messages and not two?</strong> Because multiple servers may answer; the client must select one and inform the rest. DISCOVER/OFFER handles discovery+offer, REQUEST/ACK commits the choice.</li><li><strong>Where do options come from?</strong> The ACK carries them: option 1 (mask), 3 (gateway), 6 (DNS), 15 (domain name), 51 (lease time), 53 (message type), 54 (server identifier), 119 (search domains).</li></ul>"
+    },
+    {
+      "heading": "A real DISCOVER, decoded",
+      "html": "<pre>Ethernet II, src 52:54:00:aa:bb:cc, dst ff:ff:ff:ff:ff:ff\nInternet Protocol v4, src 0.0.0.0, dst 255.255.255.255\nUser Datagram, src port 68, dst port 67\n  DHCP Message Type    = DISCOVER (1)\n  Transaction ID       = 0x3d1e9c2b\n  Client MAC Address   = 52:54:00:aa:bb:cc\n  Option 53            = DHCP DISCOVER\n  Option 55            = Parameter Request List (1,3,6,15,26,28,51,58,59,43,114)\n  Option 12            = Host Name: fedora-laptop\n  Option 60            = Vendor Class: DHCP Client (Fedora 45)</pre><p>Option 55 is the <em>parameter request list</em>: the client asking for particular options. A server that ignores it may still send a usable configuration, but a client that does not request the right options may never learn its search domain — a very common cause of 'short names do not resolve'.</p>"
+    },
+    {
+      "heading": "Leases, T1 and T2",
+      "html": "<p>A lease is time-boxed. The ACK contains lease time (option 51). Two derived timers matter:</p><table><tr><th>Timer</th><th>When</th><th>Action</th><th>Message</th></tr><tr><td>T1 (renew)</td><td>50% of lease</td><td>Unicast to the original server</td><td>DHCPREQUEST (renewing state)</td></tr><tr><td>T2 (rebind)</td><td>87.5% of lease</td><td>Broadcast to any server</td><td>DHCPREQUEST (rebinding state)</td></tr><tr><td>Expiry</td><td>100%</td><td>Drop address, start over</td><td>DHCPDISCOVER</td></tr></table><p>So an 8-hour lease renews silently at 4 hours and, if the server is gone, retries until 7 hours then rebinds. That is why an organisation with a broken DHCP server sees outages roughly <em>half a lease</em> after the failure, not immediately.</p>"
+    },
+    {
+      "heading": "Relay agents: DHCP across subnets",
+      "html": "<p>DISCOVER is broadcast, and broadcast stops at routers. If the DHCP server lives in another subnet, the router (or a relay configured on it) must act as a <strong>DHCP relay agent</strong> (option 82 capable):</p><ol class='steps'><li>Client broadcasts DISCOVER on the local segment.</li><li>The relay interface receives it (because relay addresses are set, the router listens on 67).</li><li>The relay forwards it as <em>unicast</em> to the DHCP server, adding <code>giaddr</code> = the relay interface's IP on the client's subnet.</li><li>The server picks the scope corresponding to <code>giaddr</code> and replies to the relay.</li><li>The relay forwards the OFFER/ACK back onto the client's segment.</li></ol><p>On Cisco this is <code>ip helper-address</code>. On Linux, <code>dhcrelay</code> or <code>dnsmasq --dhcp-relay</code>. Two classic failure modes: the relay is missing (client gets nothing at all), or the relay's <code>giaddr</code> matches a scope with no free addresses (client gets nothing even though the server is fine).</p>"
+    }
+  ],
+  "checks": [
+    {
+      "id": "q-m3l1-1",
+      "type": "mcq",
+      "prompt": "Why does DHCP start with a broadcast rather than addressing the server directly?",
+      "options": [
+        "Broadcast is faster than unicast",
+        "Broadcast allows encryption of the exchange",
+        "The client has no IP address and does not know the server's address",
+        "The server cannot receive unicast until a scope exists"
+      ],
+      "answer": 2,
+      "explanation": "The client is unconfigured: no IP, no mask, no gateway, no knowledge of any DHCP server. Broadcast within the segment is the only possible starting point.",
+      "why_wrong": {
+        "0": "Broadcast is strictly less efficient than unicast.",
+        "3": "Servers accept unicast fine; the limitation is on the client.",
+        "1": "DHCP has no encryption in the base protocol."
+      },
+      "concepts": [
+        "broadcast",
+        "DHCP bootstrap"
+      ]
+    },
+    {
+      "id": "q-m3l1-2",
+      "type": "mcq",
+      "prompt": "A DHCP relay forwards a DISCOVER to a server in another subnet. Which field lets the server choose the right scope?",
+      "options": [
+        "option 60",
+        "xid (transaction id)",
+        "giaddr (gateway IP address)",
+        "chaddr"
+      ],
+      "answer": 2,
+      "explanation": "giaddr is set by the relay to an address on the client's subnet, so the server knows which address pool applies.",
+      "why_wrong": {
+        "3": "chaddr is the client MAC, used for reservations and client identification.",
+        "1": "xid matches requests to replies for one client.",
+        "0": "option 60 identifies the vendor class, not the location."
+      },
+      "concepts": [
+        "relay agent",
+        "scope selection"
+      ]
+    },
+    {
+      "id": "q-m3l1-3",
+      "type": "mcq",
+      "prompt": "With a 2-hour lease, when does the client first try to renew?",
+      "options": [
+        "1 hour",
+        "2 hours",
+        "30 minutes",
+        "1 hour 45 minutes"
+      ],
+      "answer": 0,
+      "explanation": "T1 = 50% of the lease = 1 hour, as a unicast REQUEST to the original server.",
+      "why_wrong": {
+        "2": "That is 25%, not a defined timer.",
+        "3": "That is T2 (87.5%), the rebind attempt.",
+        "1": "That is expiry, by which point connectivity is lost."
+      },
+      "concepts": [
+        "lease timers"
+      ]
+    },
+    {
+      "id": "q-m3l1-4",
+      "type": "self",
+      "prompt": "Describe the complete DORA exchange including addressing, ports and broadcast behaviour, and explain why each of the four messages is needed.",
+      "checklist": [
+        {
+          "text": "Client broadcasts DISCOVER from 0.0.0.0:68 to 255.255.255.255:67.",
+          "weight": 2
+        },
+        {
+          "text": "Server replies with OFFER to UDP 68, carrying a candidate address and options.",
+          "weight": 1
+        },
+        {
+          "text": "Client broadcasts REQUEST naming the chosen server so other servers release their offers.",
+          "weight": 2
+        },
+        {
+          "text": "Server commits with ACK containing lease time and options (mask, gateway, DNS).",
+          "weight": 2
+        },
+        {
+          "text": "UDP ports 67 (server) and 68 (client) are used throughout.",
+          "weight": 1
+        },
+        {
+          "text": "Multiple servers may offer, which is why the client must explicitly select one.",
+          "weight": 1
+        }
+      ],
+      "reference": "<p>DORA is a two-phase commit. DISCOVER (broadcast 0.0.0.0:68 -> 255.255.255.255:67) discovers servers because the client has no address and knows no server. OFFER (server 67 -> client 68) proposes an address plus options, and lets the client see what each server would provide. REQUEST (broadcast) selects one offer and simultaneously tells the losing servers they can reclaim their addresses. ACK commits the lease with lease time, mask, gateway and DNS options. Ports 67/68 throughout, over UDP, because the client cannot yet use IP unicast reliably.</p>",
+      "min_to_pass": 0.75,
+      "concepts": [
+        "DORA",
+        "ports",
+        "lease"
+      ]
+    }
+  ],
+  "connect": [
+    {
+      "title": "Switching",
+      "text": "DISCOVER is a broadcast frame, so it is flooded by switches within the VLAN — which is why DHCP is per-VLAN and needs a relay to cross one."
+    },
+    {
+      "title": "IP addressing",
+      "text": "The ACK installs address, mask and gateway; the host then generates a connected route and a default route from those options."
+    },
+    {
+      "title": "DNS",
+      "text": "Option 6 configures the resolver. Without it, DNS fails even though the address is fine."
+    }
+  ],
+  "interview": [
+    {
+      "q": "Explain DHCP DORA.",
+      "a": "Discover (client broadcast), Offer (server proposes), Request (client selects and broadcasts its choice), Ack (server commits with lease and options). UDP 67/68, renrew at T1=50%, rebind at T2=87.5%."
+    },
+    {
+      "q": "Why is DHCPREQUEST broadcast when the client already knows the server?",
+      "a": "Because other servers that made offers also need to hear the selection so they can release those addresses back to the pool. Clients may unicast after the first exchange, but the broadcast form is the safe, standard behaviour."
+    }
+  ]
+}

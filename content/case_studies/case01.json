@@ -1,0 +1,122 @@
+{
+  "id": "case01",
+  "order": 1,
+  "title": "The new VLAN gets no addresses",
+  "module_id": "m3",
+  "difficulty": "core",
+  "tagline": "Twenty laptops in a brand-new VLAN all self-assign 169.254 addresses. The server is up and the pool has space.",
+  "environment": ["Linux laptop on VLAN 30", "Core switch with an SVI for VLAN 30", "Central DHCP server on a different subnet", "Fedora workstation for investigation"],
+  "topology": "laptops --[access VLAN 30]--> core switch SVI 10.30.0.1 --[routed]--> DHCP server 10.10.0.10 (scope 10.30.0.0/24, 47 free)",
+  "symptoms": [
+    "New laptops in VLAN 30 get 169.254.x.x addresses and no default gateway",
+    "Laptops in VLAN 10, served by the same DHCP server, work normally",
+    "The DHCP server is running, its scope for 10.30.0.0/24 exists and shows 47 free addresses",
+    "Existing clients in VLAN 30 that had leases earlier still work until their leases expire"
+  ],
+  "objectives": [
+    "Prove whether the DISCOVER reaches the DHCP server at all",
+    "Decide between a server-side and a network-side cause using evidence, not assumption",
+    "Identify the specific configuration element that must exist when client and server are in different subnets"
+  ],
+  "tools": ["ip addr", "ip route", "tcpdump", "journalctl", "dhcpd log", "switch config"],
+  "framework": [
+    "Layer 1/2: is the client on the segment at all?",
+    "Layer 3: is there a path from this segment to the DHCP server?",
+    "Service: is the DHCP server receiving and answering for this scope?",
+    "Configuration: what maps a client segment to a scope?"
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "label": "Client address state",
+      "command": "ip -brief addr show dev eth0",
+      "output": "eth0  UP  169.254.13.87/16",
+      "insight": "A 169.254.x.x address is the link-local fallback a client uses when no DHCP server answers. It confirms 'no lease', not why.",
+      "requires": []
+    },
+    {
+      "id": "e2",
+      "label": "Is a DISCOVER leaving the client?",
+      "command": "sudo tcpdump -ni eth0 port 67 or port 68",
+      "output": "10:02:11.412 IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from aa:bb:cc:00:00:01, length 300\n10:02:11.412 IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request\n10:02:14.500 IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request\n(repeating, nothing returns)",
+      "insight": "The client is broadcasting DISCOVERs and receiving nothing. Note the 3s then 6s spacing: exponential retransmission.",
+      "requires": ["e1"]
+    },
+    {
+      "id": "e3",
+      "label": "Server-side arrival check",
+      "command": "sudo tcpdump -ni any udp port 67 | grep -c 10.30.0.1",
+      "output": "0",
+      "insight": "Nothing arrives at the server carrying giaddr 10.30.0.1, so either the relay is absent/misconfigured or the packet never leaves VLAN 30.",
+      "requires": ["e2"]
+    },
+    {
+      "id": "e4",
+      "label": "Compare with a working VLAN",
+      "command": "sudo tcpdump -ni any udp port 67 -c 4",
+      "output": "10:04:02.118 IP 10.10.0.50.67 > 10.10.0.10.67: BOOTP/DHCP, Request from aa:bb:cc:00:00:02, length 300\n10:04:02.119 IP 10.10.0.10.67 > 10.10.0.50.67: BOOTP/DHCP, Reply, length 300",
+      "insight": "VLAN 10 has a relay working: its traffic arrives with the relay's address as giaddr. VLAN 30 has no equivalent path.",
+      "requires": ["e3"]
+    },
+    {
+      "id": "e5",
+      "label": "SVI configuration",
+      "command": "show running-config interface Vlan30",
+      "output": "interface Vlan30\n ip address 10.30.0.1 255.255.255.0\n no ip helper-address\n!",
+      "insight": "The SVI has no ip helper-address, so broadcasts on VLAN 30 are never relayed to 10.10.0.10. This is the defect.",
+      "requires": ["e4"]
+    },
+    {
+      "id": "e6",
+      "label": "Confirm the scope is correct",
+      "command": "grep -A6 'subnet 10.30.0.0' /etc/dhcp/dhcpd.conf",
+      "output": "subnet 10.30.0.0 netmask 255.255.255.0 {\n  range 10.30.0.100 10.30.0.200;\n  option routers 10.30.0.1;\n  option domain-name-servers 10.10.0.53;\n}",
+      "insight": "The scope is correct and has free addresses, which rules out the server's configuration as the cause.",
+      "requires": ["e5"]
+    },
+    {
+      "id": "e7",
+      "label": "What giaddr the server expects",
+      "command": "sudo journalctl -u dhcpd --since '10 min ago' | grep -i 'no subnet'",
+      "output": "(no output)",
+      "insight": "No 'no subnet declaration for' errors, further confirming the server is not receiving the request rather than rejecting it.",
+      "requires": ["e6"]
+    }
+  ],
+  "hypotheses": [
+    {"text": "The DHCP pool is exhausted, so no address is offered.", "verdict": "rejected", "why": "The scope reports 47 free addresses and nothing arrives at the server at all."},
+    {"text": "The DHCP server is down.", "verdict": "rejected", "why": "VLAN 10 clients are being served by the same server throughout the incident."},
+    {"text": "There is no relay for VLAN 30, so its broadcasts never reach the server.", "verdict": "accepted", "why": "tcpdump shows DISCOVERs leaving with no replies, nothing arriving at the server with giaddr 10.30.0.1, and the SVI has no ip helper-address."},
+    {"text": "The laptops have a firewall blocking UDP 68.", "verdict": "rejected", "why": "Outbound DISCOVERs are visible on the wire, so nothing is blocking them locally."}
+  ],
+  "min_evidence": 4,
+  "diagnosis_accept": ["helper-address", "relay", "no ip helper", "did not reach the dhcp server"],
+  "diagnosis_reject": ["pool exhausted", "server is down", "169.254 is the cause", "dhcp server crashed", "bad cable"],
+  "solution": {
+    "root_cause": "VLAN 30 has no DHCP relay (ip helper-address) on its gateway SVI. DHCP relies on broadcast, which cannot cross a router, so the DISCOVERs never reach the server in 10.10.0.0/24. A relay is what makes a client's segment identity visible to the server via giaddr.",
+    "resolution": "Add ip helper-address 10.10.0.10 to interface Vlan30 on the core switch. Nothing on the DHCP server needs to change; its 10.30.0.0/24 scope already exists.",
+    "verification": "New clients in VLAN 30 receive 10.30.0.x with gateway 10.30.0.1 and DNS 10.10.0.53. A capture at the server shows DISCOVERs arriving with giaddr 10.30.0.1, and each client gets its lease on the first attempt.",
+    "lessons": [
+      "DHCP is broadcast-based; a relay is mandatory whenever client and server are separated by a router.",
+      "169.254.x.x tells you a client failed to get a lease, never why. The capture tells you why.",
+      "A server-side check ('is the scope configured?') and a network-side check ('did the packet arrive?') are different questions; you need both."
+    ],
+    "interview_followups": [
+      "How does the DHCP server know which scope to use for a client on a remote segment?",
+      "What would the server log look like if the relay were configured to the wrong server address?",
+      "Why is a DHCP relay needed while a client's HTTP traffic needs no such thing?"
+    ]
+  },
+  "resolution_options": [
+    {"text": "Add ip helper-address 10.10.0.10 on the VLAN 30 SVI", "correct": true, "why": "Restores the broadcast-to-unicast relay that DHCP requires across a routed boundary."},
+    {"text": "Create a second DHCP scope on the local switch", "correct": false, "why": "switches do not normally serve DHCP, and this duplicates the addressing authority."},
+    {"text": "Extend VLAN 30 across the network so broadcasts reach the server", "correct": false, "why": "Stretching a broadcast domain to fix a relay is a much larger blast radius and a worse design."},
+    {"text": "Configure static addresses on the laptops", "correct": false, "why": "Treats the symptom for 20 devices and leaves the defect in place."},
+    {"text": "Increase the DHCP lease time", "correct": false, "why": "Irrelevant: no request ever reaches the server."}
+  ],
+  "interview_questions": [
+    {"q": "Walk me through DHCP when the client and server are in different subnets.", "a": "The client broadcasts DISCOVER; the local gateway with ip helper-address receives it, sets giaddr to its own interface address and unicasts it to the server. The server picks the scope matching giaddr and replies to the relay, which forwards to the client. Everything after that is between client, relay and server."},
+    {"q": "A client has 169.254.13.87. What are the first three things you check?", "a": "Whether DISCOVERs leave the client, whether anything arrives at the server with the right giaddr, and whether the scope still has free addresses. That separates a client problem, a relay problem and an exhaustion problem."},
+    {"q": "How would you prove the relay is the problem rather than the server?", "a": "Capture at both ends. If DISCOVERs leave the client and never appear at the server, the problem is between them, and on a routed boundary that component is the relay."}
+  ]
+}

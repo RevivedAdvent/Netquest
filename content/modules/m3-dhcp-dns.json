@@ -1,0 +1,161 @@
+{
+  "id": "m3",
+  "number": 3,
+  "title": "DHCP and DNS",
+  "tagline": "How hosts get configured, and how names become addresses.",
+  "priority": "core",
+  "weight": 2.0,
+  "estimated_minutes": 180,
+  "summary": "The two protocols that break most often and are most often misdiagnosed. DHCP gives a host its identity; DNS maps names to addresses. This module treats both as complete systems, then joins them end to end.",
+  "objectives": [
+    "Recite the DORA exchange with source/destination addresses, ports and broadcast/unicast behaviour at each step.",
+    "Explain lease timers (T1/T2), scope exhaustion and relay agents, and predict the failure signature of each.",
+    "Describe the full DNS hierarchy from client stub through recursive resolver to authoritative server.",
+    "Explain the Linux name-resolution path: NSS, /etc/nsswitch.conf, /etc/hosts, /etc/resolv.conf, systemd-resolved.",
+    "Distinguish NXDOMAIN from SERVFAIL from timeout, and explain negative caching and TTL.",
+    "Trace a laptop joining a network from DHCP through DNS to an internal application."
+  ],
+  "key_questions": [
+    "Why is DHCP discovery broadcast and why is the request also broadcast?",
+    "What exactly happens when a DHCP server is unreachable?",
+    "Walk me through resolving example.com from a Linux host.",
+    "A server can ping 8.8.8.8 but cannot resolve names. Where do you look?",
+    "What is the difference between a recursive and an iterative query?"
+  ],
+  "lesson_ids": [
+    "m3l1",
+    "m3l2",
+    "m3l3",
+    "m3l4",
+    "m3l5",
+    "m3l6"
+  ],
+  "lab_ids": [
+    "dig",
+    "resolvectl",
+    "getent",
+    "nslookup",
+    "tcpdump"
+  ],
+  "mission_ids": [
+    "case01",
+    "case02",
+    "case03",
+    "case11"
+  ],
+  "assessment": [
+    {
+      "id": "q-m3a-1",
+      "type": "mcq",
+      "prompt": "Which DHCP message is sent by the client as a broadcast, even though a server has already offered an address?",
+      "options": [
+        "DHCPDISCOVER",
+        "DHCPOFFER",
+        "DHCPACK",
+        "DHCPREQUEST"
+      ],
+      "answer": 3,
+      "explanation": "DHCPREQUEST is broadcast so that any other DHCP servers who made offers learn that their offer was declined. It also carries the requested server identifier.",
+      "why_wrong": {
+        "0": "DISCOVER is broadcast, but it precedes the offer.",
+        "1": "OFFER is the server's message, typically unicast (or broadcast if it cannot reach the client).",
+        "2": "ACK is the server's confirmation."
+      },
+      "concepts": [
+        "DORA",
+        "broadcast behaviour"
+      ]
+    },
+    {
+      "id": "q-m3a-2",
+      "type": "mcq",
+      "prompt": "A client's lease is 8 hours. At what point does it attempt to renew, and with what message?",
+      "options": [
+        "At 2 hours, DHCPINFORM broadcast",
+        "At 4 hours (T1), DHCPREQUEST unicast to the original server",
+        "At 8 hours, after the lease expires",
+        "At 7 hours (T2), DHCPDISCOVER broadcast"
+      ],
+      "answer": 1,
+      "explanation": "T1 is 50% of the lease: renewal is a unicast DHCPREQUEST to the leasing server. T2 (87.5%) is when the client rebinds by broadcasting. At expiry the client must start over with DISCOVER.",
+      "why_wrong": {
+        "3": "T2 is 87.5% = 7 hours, and rebinding broadcasts to any server — that part is right, but T1 is the *first* renewal.",
+        "2": "Waiting until expiry means losing connectivity unnecessarily.",
+        "0": "DHCPINFORM asks for options only; it does not renew a lease."
+      },
+      "concepts": [
+        "lease timers",
+        "T1/T2"
+      ]
+    },
+    {
+      "id": "q-m3a-3",
+      "type": "mcq",
+      "prompt": "A recursive resolver receives a response with RCODE 2 (SERVFAIL) for a name that definitely exists. Which conclusion is most defensible?",
+      "options": [
+        "The record type is not supported",
+        "The resolver could not obtain a usable answer — e.g. upstream failure, DNSSEC validation problem or timeout",
+        "The name does not exist anywhere in the DNS",
+        "The client's search domain is wrong"
+      ],
+      "answer": 1,
+      "explanation": "SERVFAIL means 'I could not answer', not 'this name does not exist'. NXDOMAIN (RCODE 3) is the definitive non-existence answer.",
+      "why_wrong": {
+        "2": "That is NXDOMAIN.",
+        "0": "Unsupported types usually return NOERROR with no records, or NOTIMP.",
+        "3": "A wrong search domain produces NXDOMAIN for the appended name, not SERVFAIL."
+      },
+      "concepts": [
+        "DNS response codes",
+        "SERVFAIL"
+      ]
+    },
+    {
+      "id": "q-m3a-4",
+      "type": "self",
+      "prompt": "Explain the full journey of resolving https://example.com from a Fedora desktop, from the browser cache to the HTTPS connection. Be precise about which component does what.",
+      "checklist": [
+        {
+          "text": "Browser checks its own cache (and may use DoH/its own resolver if configured).",
+          "weight": 1
+        },
+        {
+          "text": "The OS resolves via the system resolver; glibc getaddrinfo consults /etc/nsswitch.conf -> hosts, then dns.",
+          "weight": 2
+        },
+        {
+          "text": "/etc/hosts is checked before DNS.",
+          "weight": 1
+        },
+        {
+          "text": "The configured resolver comes from /etc/resolv.conf; with systemd-resolved the stub 127.0.0.53 forwards to upstream servers.",
+          "weight": 2
+        },
+        {
+          "text": "The recursive resolver checks its cache first, then walks root -> TLD -> authoritative if needed.",
+          "weight": 2
+        },
+        {
+          "text": "The authoritative server returns the record; the resolver caches it for the TTL.",
+          "weight": 1
+        },
+        {
+          "text": "Resolution is separate from the connection: the client then does ARP/NDP, routing, a TCP handshake to port 443, then TLS, then HTTP.",
+          "weight": 2
+        },
+        {
+          "text": "Caching may satisfy the lookup at several points, so the full hierarchy walk is not always performed.",
+          "weight": 1
+        }
+      ],
+      "reference": "<p>The browser first checks its DNS cache, then calls the OS resolver. On Linux that is typically glibc's <code>getaddrinfo</code>, which consults <code>/etc/nsswitch.conf</code>: usually <code>hosts: files dns</code> — so <code>/etc/hosts</code> wins before DNS. The <code>dns</code> module reads <code>/etc/resolv.conf</code> for nameservers; on a systemd machine the listed server is often <code>127.0.0.53</code>, the systemd-resolved stub, which forwards to the real upstream servers and keeps its own cache.</p><p>The recursive resolver the query reaches either answers from cache or iterates: root servers give a referral for <code>.com</code>, the <code>.com</code> TLD servers refer to example.com's authoritative nameservers, and those return the A record (or a CNAME chain to it). The answer is cached for the TTL and returned to the client.</p><p>Only then does a <em>connection</em> happen, which is a separate process: routing lookup and ARP/NDP for the next hop, TCP SYN to port 443, TLS handshake, HTTP request. DNS failure and TCP failure produce different errors and must be diagnosed separately.</p>",
+      "min_to_pass": 0.7,
+      "concepts": [
+        "DNS resolution",
+        "NSS",
+        "resolv.conf",
+        "TCP/TLS separation"
+      ]
+    }
+  ]
+}
